@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lead Gen Jay · Instantly Workspace Health Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Google font -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+    />
+
+    <!-- Flatpickr calendar styles -->
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css"
+    />
+
+    <style>
+      :root {
+        --bg: #f3f5ff;
+        --bg-soft: #e3e7ff;
+        --nav: #071938;
+        --panel: #ffffff;
+        --border-subtle: #d1d5f0;
+        --accent: #2563eb;
+        --accent-dark: #1d4ed8;
+        --accent-soft: #e0ebff;
+        --text-main: #111827;
+        --text-muted: #6b7280;
+        --danger: #ef4444;
+        --danger-soft: #fee2e2;
+        --warn-soft: #fef3c7;
+        --ok-soft: #dcfce7;
+        --radius-lg: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #ffffff 0, var(--bg) 55%);
+        color: var(--text-main);
+      }
+
+      .top-bar {
+        width: 100%;
+        background: var(--nav);
+        color: #e5e7eb;
+        padding: 10px 18px;
+        font-size: 12px;
+        display: flex;
+        justify-content: center;
+      }
+
+      .app-shell {
+        max-width: 1120px;
+        margin: 24px auto 32px;
+        padding: 0 16px 24px;
+      }
+
+      .header-card {
+        background: linear-gradient(
+          135deg,
+          #ffffff 0%,
+          #f0f4ff 45%,
+          #e0ebff 100%
+        );
+        border-radius: 18px;
+        border: 1px solid #dde3ff;
+        padding: 18px 20px 16px;
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.07);
+        margin-bottom: 18px;
+      }
+
+      .header {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .title-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .logo-img {
+        height: 32px;
+        width: auto;
+      }
+
+      .title-pill {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(37, 99, 235, 0.08);
+        border: 1px solid rgba(37, 99, 235, 0.25);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--accent);
+        font-weight: 600;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        color: #020617;
+      }
+
+      .subtitle {
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 2.2fr) minmax(260px, 1fr);
+        gap: 18px;
+      }
+
+      @media (max-width: 900px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .logo-img {
+          height: 26px;
+        }
+      }
+
+      .panel {
+        background: var(--panel);
+        border-radius: 16px;
+        border: 1px solid var(--border-subtle);
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+        padding: 16px 16px 18px;
+      }
+
+      .panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+
+      .panel-header-title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .panel-header-subtitle {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .controls-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+        flex: 1 1 140px;
+      }
+
+      .field label {
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+
+      .field input[type="text"] {
+        border-radius: 999px;
+        border: 1px solid #d4daf5;
+        padding: 7px 11px;
+        font-size: 12px;
+        background: #ffffff;
+        color: var(--text-main);
+        outline: none;
+      }
+
+      .field input[type="text"]::placeholder {
+        color: #9ca3af;
+      }
+
+      .field input[type="text"]:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35);
+      }
+
+      .run-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 6px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border-radius: 999px;
+        padding: 7px 16px;
+        font-size: 12px;
+        border: none;
+        cursor: pointer;
+        background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+        color: white;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        box-shadow: 0 16px 35px rgba(37, 99, 235, 0.45);
+        font-weight: 500;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+        box-shadow: none;
+      }
+
+      .webhook-btn {
+        padding: 4px 10px;
+        font-size: 11px;
+        box-shadow: none;
+        background: var(--accent);
+      }
+
+      .chip {
+        font-size: 11px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        border: 1px dashed rgba(148, 163, 184, 0.8);
+        color: var(--text-muted);
+        white-space: nowrap;
+      }
+
+      .chip strong {
+        color: var(--accent-dark);
+      }
+
+      .loading {
+        margin-top: 6px;
+        padding: 8px 12px;
+        border-radius: var(--radius-lg);
+        background: #eef2ff;
+        border: 1px solid rgba(37, 99, 235, 0.5);
+        font-size: 11px;
+        color: #1e3a8a;
+      }
+
+      .loading.hidden {
+        display: none;
+      }
+
+      .loading-top {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .loading-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--accent);
+        box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7);
+        animation: pulse-dot 1.2s infinite;
+      }
+
+      @keyframes pulse-dot {
+        0% {
+          transform: scale(1);
+          box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7);
+        }
+        70% {
+          transform: scale(1.3);
+          box-shadow: 0 0 0 6px rgba(37, 99, 235, 0);
+        }
+        100% {
+          transform: scale(1);
+          box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+        }
+      }
+
+      .loading-bar {
+        margin-top: 6px;
+        width: 100%;
+        height: 5px;
+        border-radius: 999px;
+        background: #e5e7eb;
+        overflow: hidden;
+      }
+
+      .loading-bar-fill {
+        width: 40%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--accent), #a855f7);
+        animation: loading-bar 1s infinite;
+      }
+
+      @keyframes loading-bar {
+        0% {
+          transform: translateX(-100%);
+        }
+        50% {
+          transform: translateX(0%);
+        }
+        100% {
+          transform: translateX(100%);
+        }
+      }
+
+      .legend-card {
+        background: #ffffff;
+        border-radius: 16px;
+        border: 1px solid var(--border-subtle);
+        padding: 14px;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+      }
+
+      .legend-header {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 10px;
+      }
+
+      .legend-title {
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .legend-sub {
+        font-size: 11px;
+        color: var(--text-muted);
+      }
+
+      .legend-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+      }
+
+      .legend-label {
+        min-width: 90px;
+        font-weight: 500;
+      }
+
+      .legend-desc {
+        color: var(--text-muted);
+        font-size: 11px;
+      }
+
+      .legend-note {
+        margin-top: 10px;
+        font-size: 10px;
+        color: #6b7280;
+      }
+
+      .results-panel-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .results-panel-sub {
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-bottom: 10px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+
+      thead {
+        background: #f3f4ff;
+      }
+
+      th,
+      td {
+        padding: 7px 8px;
+        text-align: left;
+        border-bottom: 1px solid #e5e7eb;
+      }
+
+      th {
+        font-size: 11px;
+        color: var(--text-muted);
+        font-weight: 500;
+      }
+
+      tbody tr:nth-child(even) {
+        background: #f9fafb;
+      }
+
+      tbody tr:nth-child(odd) {
+        background: #ffffff;
+      }
+
+      .row-at_risk {
+        background: var(--danger-soft) !important;
+      }
+
+      .row-early {
+        background: var(--warn-soft) !important;
+      }
+
+      .row-healthy {
+        background: var(--ok-soft) !important;
+      }
+
+      .badge {
+        font-size: 10px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+        font-weight: 500;
+      }
+
+      .badge-at_risk {
+        border-color: rgba(239, 68, 68, 0.8);
+        color: #991b1b;
+        background: #fecaca;
+      }
+
+      .badge-early {
+        border-color: rgba(234, 179, 8, 0.9);
+        color: #92400e;
+        background: #fef3c7;
+      }
+
+      .badge-healthy {
+        border-color: rgba(22, 163, 74, 0.9);
+        color: #166534;
+        background: #bbf7d0;
+      }
+
+      .muted {
+        color: var(--text-muted);
+        font-size: 11px;
+      }
+
+      .workspace-name {
+        font-weight: 500;
+      }
+
+      .workspace-id {
+        font-size: 10px;
+        color: var(--text-muted);
+      }
+
+      .error-text {
+        font-size: 11px;
+        color: #b91c1c;
+      }
+
+      .no-results {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      /* Note input inside table */
+      .note-input {
+        width: 100%;
+        border-radius: 999px;
+        border: 1px solid #d4daf5;
+        padding: 4px 8px;
+        font-size: 11px;
+        background: #ffffff;
+        color: var(--text-main);
+        outline: none;
+      }
+
+      .note-input::placeholder {
+        color: #9ca3af;
+      }
+
+      .note-input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.25);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="top-bar">
+      Lead Gen Jay · Internal Instantly Health Monitor
+    </div>
+
+    <div class="app-shell">
+      <div class="header-card">
+        <header class="header">
+          <div class="title-row">
+            <img
+              src="https://assets.cdn.filesafe.space/YB8rMdFShcHGcZGW87mA/media/6534365d0669b53f5127c755.png"
+              alt="Lead Gen Jay"
+              class="logo-img"
+            />
+            <span class="title-pill">Instantly · Health Monitor</span>
+          </div>
+          <h1>Workspace Health Dashboard</h1>
+          <p class="subtitle">
+            Paste a Google Sheet URL with workspace IDs + API keys, choose a
+            date range, and instantly spot which accounts are healthy, early, or
+            at risk.
+          </p>
+        </header>
+      </div>
+
+      <div class="layout">
+        <!-- LEFT: Controls + Results -->
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <div class="panel-header-title">Report Controls</div>
+              <div class="panel-header-subtitle">
+                1 row per workspace in your Sheet (col A: workspace_id, col B:
+                API key)
+              </div>
+            </div>
+          </div>
+
+          <div class="controls-row">
+            <div class="field" style="flex-basis: 100%">
+              <label for="sheetUrl">Google Sheet URL (view-only)</label>
+              <input
+                id="sheetUrl"
+                type="text"
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+              />
+            </div>
+          </div>
+
+          <div class="controls-row">
+            <div class="field">
+              <label for="startDate">Start date</label>
+              <input
+                id="startDate"
+                type="text"
+                class="date-input"
+                placeholder="YYYY-MM-DD"
+              />
+            </div>
+            <div class="field">
+              <label for="endDate">End date</label>
+              <input
+                id="endDate"
+                type="text"
+                class="date-input"
+                placeholder="YYYY-MM-DD"
+              />
+            </div>
+          </div>
+
+          <div class="controls-row">
+            <div class="field" style="flex-basis: 100%">
+              <label for="webhookUrl">Webhook URL (optional, per-row send)</label>
+              <input
+                id="webhookUrl"
+                type="text"
+                placeholder="https://your-n8n-or-webhook-endpoint"
+              />
+            </div>
+          </div>
+
+          <div class="run-row">
+            <span class="chip">
+              Sheet tab: <strong>gid=928115249</strong> · A: Workspace ID, B:
+              API key
+            </span>
+            <button id="runBtn" onclick="runReport()">
+              <span>▶</span> Run Report
+            </button>
+          </div>
+
+          <div id="loading" class="loading hidden">
+            <div class="loading-top">
+              <div class="loading-dot"></div>
+              <div>Collecting workspaces &amp; Instantly stats…</div>
+            </div>
+            <div class="loading-bar">
+              <div class="loading-bar-fill"></div>
+            </div>
+          </div>
+
+          <div style="margin-top: 14px">
+            <div class="results-panel-title">
+              Workspace Results
+              <span class="muted">(one row per Instantly workspace)</span>
+            </div>
+
+            <div id="results"></div>
+          </div>
+        </section>
+
+        <!-- RIGHT: Legend -->
+        <aside class="legend-card">
+          <div class="legend-header">
+            <div class="legend-title">Health Score Legend</div>
+            <div class="legend-sub">
+              Rows are colored based on emails sent and opportunities in the
+              date range.
+            </div>
+          </div>
+
+          <ul class="legend-list">
+            <li class="legend-item">
+              <span class="legend-label">🟢 Healthy</span>
+              <span class="legend-desc"
+                >At least 1 opportunity in the selected date range and 2,000+
+                emails sent.</span
+              >
+            </li>
+            <li class="legend-item">
+              <span class="legend-label">🔴 At Risk</span>
+              <span class="legend-desc"
+                >2,000+ emails sent in the selected range and 0 opportunities.
+                Needs attention.</span
+              >
+            </li>
+            <li class="legend-item">
+              <span class="legend-label">🟡 Early</span>
+              <span class="legend-desc"
+                >Fewer than 2,000 emails sent in the selected date range. Still
+                ramping / not enough data.</span
+              >
+            </li>
+          </ul>
+
+          <div class="legend-note">
+            Tip: use a shorter date range (e.g. last 7–30 days) for early
+            detection of underperforming workspaces.
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <!-- Flatpickr script -->
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
+    <script>
+      let lastWorkspaces = [];
+
+      function setDefaultDates() {
+        const end = new Date();
+        const start = new Date(end);
+        start.setMonth(start.getMonth() - 1); // last 30 days
+        const fmt = (d) => d.toISOString().slice(0, 10);
+
+        const startInput = document.getElementById("startDate");
+        const endInput = document.getElementById("endDate");
+
+        flatpickr(startInput, {
+          dateFormat: "Y-m-d",
+          defaultDate: fmt(start),
+        });
+
+        flatpickr(endInput, {
+          dateFormat: "Y-m-d",
+          defaultDate: fmt(end),
+        });
+      }
+
+      function showLoading(show) {
+        const loading = document.getElementById("loading");
+        const btn = document.getElementById("runBtn");
+        if (show) {
+          loading.classList.remove("hidden");
+          btn.disabled = true;
+        } else {
+          loading.classList.add("hidden");
+          btn.disabled = false;
+        }
+      }
+
+      async function runReport() {
+        const sheetInput = document.getElementById("sheetUrl");
+        const startInput = document.getElementById("startDate");
+        const endInput = document.getElementById("endDate");
+        const resultsDiv = document.getElementById("results");
+
+        const sheetUrl =
+          sheetInput.value.trim() ||
+          "https://docs.google.com/spreadsheets/d/1CNejGg-egkp28ItSRfW7F_CkBXgYevjzstJ1QlrAyAY/edit";
+        const startDate = startInput.value;
+        const endDate = endInput.value;
+
+        resultsDiv.innerHTML = "";
+        lastWorkspaces = [];
+
+        if (!startDate || !endDate) {
+          resultsDiv.innerHTML =
+            "<div class='error-text'>Please select a start and end date.</div>";
+          return;
+        }
+
+        const params = new URLSearchParams({
+          start_date: startDate,
+          end_date: endDate,
+          sheet_url: sheetUrl,
+        });
+
+        try {
+          showLoading(true);
+
+          const resp = await fetch(`/multi-overview?${params.toString()}`);
+          const data = await resp.json();
+
+          if (!resp.ok) {
+            resultsDiv.innerHTML = `<div class="error-text">Error: ${
+              data.error || resp.statusText
+            }</div>`;
+            showLoading(false);
+            return;
+          }
+
+          const workspaces = data.workspaces || [];
+          lastWorkspaces = workspaces;
+
+          if (!workspaces.length) {
+            resultsDiv.innerHTML =
+              "<div class='no-results'>No workspaces detected in the sheet or no stats returned for the selected range.</div>";
+            showLoading(false);
+            return;
+          }
+
+          let html = `
+            <table>
+              <thead>
+                <tr>
+                  <th>Workspace</th>
+                  <th style="width:110px">Emails sent</th>
+                  <th style="width:90px">Replies</th>
+                  <th style="width:120px">Opportunities</th>
+                  <th style="width:100px">Health</th>
+                  <th style="width:180px">Note</th>
+                  <th style="width:110px">Webhook</th>
+                </tr>
+              </thead>
+              <tbody>
+          `;
+
+          workspaces.forEach((ws, i) => {
+            const s = ws.summary || {};
+            const sent = s.emails_sent ?? 0;
+            const replies = s.replies ?? 0;
+            const opps = s.opportunities ?? 0;
+            const health = ws.health || s.health || "early";
+
+            let rowClass = "";
+            let badgeClass = "";
+            let badgeLabel = "";
+
+            if (health === "at_risk") {
+              rowClass = "row-at_risk";
+              badgeClass = "badge badge-at_risk";
+              badgeLabel = "🔴 At Risk";
+            } else if (health === "early") {
+              rowClass = "row-early";
+              badgeClass = "badge badge-early";
+              badgeLabel = "🟡 Early";
+            } else {
+              rowClass = "row-healthy";
+              badgeClass = "badge badge-healthy";
+              badgeLabel = "🟢 Healthy";
+            }
+
+            let tooltipText;
+            if (health === "at_risk") {
+              tooltipText = `${sent.toLocaleString()} sent · ${opps.toLocaleString()} opps · At Risk (>= 2,000 sent & 0 opps)`;
+            } else if (health === "early") {
+              tooltipText = `${sent.toLocaleString()} sent · ${opps.toLocaleString()} opps · Early (fewer than 2,000 sent)`;
+            } else {
+              tooltipText = `${sent.toLocaleString()} sent · ${opps.toLocaleString()} opps · Healthy`;
+            }
+            const safeTitle = tooltipText.replace(/"/g, "&quot;");
+
+            html += `
+              <tr class="${rowClass}">
+                <td>
+                  <div class="workspace-name">${ws.workspace_name || "Unknown workspace"}</div>
+                  <div class="workspace-id">${ws.workspace_id || ws.label}</div>
+                </td>
+                <td>${sent.toLocaleString()}</td>
+                <td>${replies.toLocaleString()}</td>
+                <td>${opps.toLocaleString()}</td>
+                <td>
+                  <span class="${badgeClass}" title="${safeTitle}">
+                    ${badgeLabel}
+                  </span>
+                </td>
+                <td>
+                  <input
+                    id="note-${i}"
+                    class="note-input"
+                    type="text"
+                    placeholder="Optional note about this account"
+                  />
+                </td>
+                <td id="webhook-status-${i}">
+                  <button
+                    type="button"
+                    class="webhook-btn"
+                    onclick="sendWebhook(${i})"
+                  >
+                    Send
+                  </button>
+                </td>
+              </tr>
+            `;
+          });
+
+          html += "</tbody></table>";
+          resultsDiv.innerHTML = html;
+        } catch (err) {
+          console.error(err);
+          resultsDiv.innerHTML = `<div class="error-text">Unexpected error: ${err}</div>`;
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      async function sendWebhook(index) {
+        const webhookInput = document.getElementById("webhookUrl");
+        const webhookUrl = webhookInput.value.trim();
+        const statusCell = document.getElementById(`webhook-status-${index}`);
+        const noteInput = document.getElementById(`note-${index}`);
+        const note = noteInput ? noteInput.value.trim() : "";
+
+        if (!webhookUrl) {
+          statusCell.innerHTML =
+            "<span class='error-text'>Add webhook URL above</span>";
+          return;
+        }
+
+        const ws = lastWorkspaces[index];
+        if (!ws) {
+          statusCell.innerHTML =
+            "<span class='error-text'>No workspace data</span>";
+          return;
+        }
+
+        const s = ws.summary || {};
+        const payload = {
+          workspace_id: ws.workspace_id || ws.label,
+          workspace_name: ws.workspace_name || ws.label || "Unknown workspace",
+          start_date: ws.start_date,
+          end_date: ws.end_date,
+          emails_sent: s.emails_sent ?? 0,
+          replies: s.replies ?? 0,
+          opportunities: s.opportunities ?? 0,
+          health: ws.health || s.health || "early",
+          note: note,
+        };
+
+        statusCell.textContent = "Sending…";
+        statusCell.className = "muted";
+
+        try {
+          const resp = await fetch("/send-webhook", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              webhook_url: webhookUrl,
+              workspace: payload,
+              note: note,
+            }),
+          });
+
+          const data = await resp.json();
+
+          if (!resp.ok || !data.success) {
+            statusCell.innerHTML = "<span class='error-text'>Error</span>";
+            console.error("Webhook error:", data);
+            return;
+          }
+
+          statusCell.innerHTML = "<span class='muted'>Sent ✓</span>";
+        } catch (err) {
+          console.error("Webhook exception:", err);
+          statusCell.innerHTML = "<span class='error-text'>Error</span>";
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        setDefaultDates();
+        document.getElementById("sheetUrl").value =
+          "https://docs.google.com/spreadsheets/d/1CNejGg-egkp28ItSRfW7F_CkBXgYevjzstJ1QlrAyAY/edit";
+      });
+    </script>
+  </body>
+</html>
