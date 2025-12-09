@@ -519,6 +519,54 @@
         border-color: var(--accent);
         box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.25);
       }
+
+      /* Platform Toggle */
+      .platform-toggle-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+        padding: 10px;
+        background: #f9fafb;
+        border-radius: 12px;
+        border: 1px solid var(--border-subtle);
+      }
+
+      .platform-toggle-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-main);
+      }
+
+      .toggle-switch {
+        display: inline-flex;
+        background: #e5e7eb;
+        border-radius: 999px;
+        padding: 3px;
+        gap: 3px;
+      }
+
+      .toggle-option {
+        padding: 6px 16px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        color: var(--text-muted);
+        border: none;
+        background: transparent;
+      }
+
+      .toggle-option.active {
+        background: white;
+        color: var(--accent);
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+      }
+
+      .toggle-option:hover:not(.active) {
+        color: var(--text-main);
+      }
     </style>
   </head>
   <body>
@@ -556,6 +604,26 @@
                 1 row per workspace in your Sheet (col A: workspace_id, col B:
                 API key)
               </div>
+            </div>
+          </div>
+
+          <div class="platform-toggle-container">
+            <span class="platform-toggle-label">Platform:</span>
+            <div class="toggle-switch">
+              <button
+                id="toggleInstantly"
+                class="toggle-option active"
+                onclick="switchPlatform('instantly')"
+              >
+                Instantly
+              </button>
+              <button
+                id="toggleEmailBison"
+                class="toggle-option"
+                onclick="switchPlatform('emailbison')"
+              >
+                Email Bison
+              </button>
             </div>
           </div>
 
@@ -679,6 +747,30 @@
 
     <script>
       let lastWorkspaces = [];
+      let currentPlatform = 'instantly'; // Default platform
+
+      function switchPlatform(platform) {
+        currentPlatform = platform;
+
+        // Update toggle button states
+        const instantlyBtn = document.getElementById('toggleInstantly');
+        const emailBisonBtn = document.getElementById('toggleEmailBison');
+
+        if (platform === 'instantly') {
+          instantlyBtn.classList.add('active');
+          emailBisonBtn.classList.remove('active');
+        } else {
+          instantlyBtn.classList.remove('active');
+          emailBisonBtn.classList.add('active');
+        }
+
+        // Clear previous results when switching platforms
+        const resultsDiv = document.getElementById('results');
+        resultsDiv.innerHTML = '';
+        lastWorkspaces = [];
+
+        console.log('Switched to platform:', platform);
+      }
 
       function setDefaultDates() {
         const end = new Date();
@@ -737,6 +829,7 @@
           start_date: startDate,
           end_date: endDate,
           sheet_url: sheetUrl,
+          platform: currentPlatform,
         });
 
         try {

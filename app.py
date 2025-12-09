@@ -20,12 +20,18 @@ INSTANTLY_WORKSPACE_URL = "https://api.instantly.ai/api/v2/workspaces/current"
 # Campaign statuses to scan
 CAMPAIGN_STATUSES = [0, 1, 2, 3, 4, -99, -1, -2]
 
+# Email Bison API configuration
+EMAIL_BISON_BASE_URL = "https://send.leadgenjay.com"
+EMAIL_BISON_CAMPAIGNS_URL = f"{EMAIL_BISON_BASE_URL}/api/campaigns"
+EMAIL_BISON_STATS_URL = f"{EMAIL_BISON_BASE_URL}/api/campaigns"  # append /{id}/stats
+
 # Default sheet + tab (gid) – can be overridden by sheet_url query param
 DEFAULT_SHEET_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1CNejGg-egkp28ItSRfW7F_CkBXgYevjzstJ1QlrAyAY/edit"
 )
-SHEET_GID = "928115249"  # third tab in your sheet
+SHEET_GID_INSTANTLY = "928115249"  # Instantly workspaces tab
+SHEET_GID_EMAILBISON = "1631680229"  # Email Bison accounts tab
 
 # Health scoring thresholds
 MIN_EMAILS_FOR_HEALTH = 2000
@@ -75,7 +81,7 @@ def classify_health(emails_sent: int, opportunities: int) -> str:
 app = Flask(__name__)
 
 
-def load_workspaces_from_sheet(sheet_url: str, gid: str = SHEET_GID) -> list[dict]:
+def load_workspaces_from_sheet(sheet_url: str, gid: str = SHEET_GID_INSTANTLY) -> list[dict]:
     """
     Reads a public/view-only Google Sheet tab as CSV and returns:
       [
@@ -287,6 +293,209 @@ def aggregate_overview_for_workspace(
     }
 
 
+# ========== EMAIL BISON FUNCTIONS ==========
+
+def fetch_emailbison_campaigns(api_key: str) -> list[dict]:
+    """
+    Fetches all campaigns for an Email Bison account.
+    Returns a list of campaign objects.
+    """
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    try:
+        resp = requests.get(
+            EMAIL_BISON_CAMPAIGNS_URL,
+            headers=headers,
+            timeout=30,
+        )
+
+        if not resp.ok:
+            print(
+                f"[EmailBison] error fetching campaigns: {resp.status_code} {resp.text}"
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        campaigns = data.get("data", [])
+        print(f"[EmailBison] Found {len(campaigns)} campaigns")
+        return campaigns
+    except Exception as e:
+        print(f"[EmailBison] Exception fetching campaigns: {e}")
+        return []
+
+
+def fetch_emailbison_campaign_stats(
+    campaign_id: int,
+    api_key: str,
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """
+    Fetches stats for a single Email Bison campaign with date range.
+    Returns stats dict. All values are strings from the API.
+    """
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    url = f"{EMAIL_BISON_STATS_URL}/{campaign_id}/stats"
+    payload = {
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+    try:
+        resp = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+
+        if not resp.ok:
+            print(
+                f"[EmailBison] error fetching stats for campaign {campaign_id}: "
+                f"{resp.status_code} {resp.text}"
+            )
+            return {}
+
+        data = resp.json()
+        return data.get("data", {})
+    except Exception as e:
+        print(f"[EmailBison] Exception fetching stats for campaign {campaign_id}: {e}")
+        return {}
+
+
+def aggregate_emailbison_account(
+    api_key: str,
+    start_date: str,
+    end_date: str,
+    account_label: str = None,
+) -> dict:
+    """
+    Fetches all campaigns for an Email Bison account and aggregates stats.
+    Returns combined stats by SUMMING across all campaigns.
+    """
+    # Get all campaigns
+    campaigns = fetch_emailbison_campaigns(api_key)
+
+    if not campaigns:
+        print(f"[EmailBison] No campaigns found for {account_label}")
+        return {
+            "emails_sent": 0,
+            "replies": 0,
+            "opportunities": 0,
+        }
+
+    # Fetch stats for all campaigns in parallel
+    totals = {
+        "emails_sent": 0,
+        "replies": 0,
+        "opportunities": 0,
+    }
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {
+            executor.submit(
+                fetch_emailbison_campaign_stats,
+                campaign["id"],
+                api_key,
+                start_date,
+                end_date,
+            ): campaign
+            for campaign in campaigns
+        }
+
+        for future in as_completed(futures):
+            campaign = futures[future]
+            stats = future.result()
+
+            if not stats:
+                continue
+
+            # Convert string values to integers and sum
+            emails_sent = int(stats.get("emails_sent", "0"))
+            replies = int(stats.get("unique_replies_per_contact", "0"))
+            opportunities = int(stats.get("interested", "0"))
+
+            totals["emails_sent"] += emails_sent
+            totals["replies"] += replies
+            totals["opportunities"] += opportunities
+
+            print(
+                f"[EmailBison] Campaign '{campaign.get('name')}' (ID {campaign['id']}): "
+                f"sent={emails_sent} replies={replies} opps={opportunities}"
+            )
+
+    print(
+        f"[EmailBison] {account_label} TOTAL: "
+        f"sent={totals['emails_sent']} replies={totals['replies']} opps={totals['opportunities']}"
+    )
+
+    return totals
+
+
+def process_single_emailbison_account(
+    row: dict,
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """
+    Processes a single Email Bison account: fetches all campaigns and aggregates stats.
+    Returns a dict with all the account data.
+    """
+    api_key = row["api_key"]
+    label = row.get("workspace_id", "Unknown Account")
+
+    # For Email Bison, we don't have a separate "workspace name" endpoint
+    # So we just use the label from the sheet
+    account_name = label
+
+    # Aggregate stats across all campaigns
+    stats = aggregate_emailbison_account(
+        api_key=api_key,
+        start_date=start_date,
+        end_date=end_date,
+        account_label=account_name,
+    )
+
+    emails_sent = stats["emails_sent"]
+    replies = stats["replies"]
+    opportunities = stats["opportunities"]
+
+    health = classify_health(emails_sent, opportunities)
+
+    print(
+        f"[EmailBison] account={account_name} | "
+        f"{start_date} -> {end_date} | "
+        f"sent={emails_sent} replies={replies} opps={opportunities} "
+        f"status={health}"
+    )
+
+    summary = {
+        "emails_sent": emails_sent,
+        "replies": replies,
+        "opportunities": opportunities,
+        "health": health,
+    }
+
+    return {
+        "workspace_id": label,
+        "workspace_name": account_name,
+        "label": label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "combined": stats,
+        "summary": summary,
+        "health": health,
+    }
+
+
+# ========== INSTANTLY FUNCTIONS ==========
+
 def process_single_workspace(
     row: dict,
     start_date: str,
@@ -355,11 +564,11 @@ def process_single_workspace(
 @app.get("/multi-overview")
 def multi_overview():
     """
-    GET /multi-overview?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&sheet_url=...
+    GET /multi-overview?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&sheet_url=...&platform=instantly|emailbison
 
     Uses a Google Sheet (with workspace_id + api_key) to:
       - Loop through all workspaces IN PARALLEL
-      - Pull Instantly analytics for the date range
+      - Pull analytics for the date range (Instantly or Email Bison)
       - Compute per-workspace summary + health status
       - Return a JSON with:
           - totals across all
@@ -374,11 +583,24 @@ def multi_overview():
 
         start_date = request.args.get("start_date", default_start)
         end_date = request.args.get("end_date", default_end)
+        platform = request.args.get("platform", "instantly")
 
         sheet_url = request.args.get("sheet_url", DEFAULT_SHEET_URL)
 
+        # Select the correct sheet GID based on platform
+        if platform == "emailbison":
+            sheet_gid = SHEET_GID_EMAILBISON
+            process_func = process_single_emailbison_account
+            platform_name = "Email Bison"
+        else:
+            sheet_gid = SHEET_GID_INSTANTLY
+            process_func = process_single_workspace
+            platform_name = "Instantly"
+
+        print(f"[{platform_name}] Loading workspaces from sheet with gid={sheet_gid}")
+
         # 1) Load workspaces from sheet
-        workspaces = load_workspaces_from_sheet(sheet_url)
+        workspaces = load_workspaces_from_sheet(sheet_url, sheet_gid)
 
         results = []
         totals = {
@@ -392,7 +614,7 @@ def multi_overview():
             # Submit all workspace processing tasks
             futures = {
                 executor.submit(
-                    process_single_workspace,
+                    process_func,
                     row,
                     start_date,
                     end_date,
@@ -413,7 +635,7 @@ def multi_overview():
                     totals["opportunities"] += summary["opportunities"]
                 except Exception as e:
                     row = futures[future]
-                    print(f"[Instantly] Error processing workspace {row['workspace_id']}: {e}")
+                    print(f"[{platform_name}] Error processing workspace {row['workspace_id']}: {e}")
                     traceback.print_exc()
 
         return jsonify(
