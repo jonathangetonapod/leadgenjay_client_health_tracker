@@ -1168,34 +1168,72 @@
               accBadgeLabel = "🟢 Active";
             }
 
-            html += `
-              <tr class="account-detail-row" data-workspace="${wsIndex}">
-                <td colspan="6">
-                  <div style="display: flex; gap: 20px; align-items: center;">
-                    <div style="flex: 1;">
-                      <strong>${acc.email}</strong>
+            // Check if this is Email Bison or Instantly based on available fields
+            const isEmailBison = acc.hasOwnProperty('emails_sent_count');
+
+            if (isEmailBison) {
+              // Email Bison layout
+              const tags = acc.tags && acc.tags.length > 0 ? acc.tags.join(', ') : 'None';
+              html += `
+                <tr class="account-detail-row" data-workspace="${wsIndex}">
+                  <td colspan="6">
+                    <div style="display: flex; gap: 20px; align-items: center;">
+                      <div style="flex: 1;">
+                        <strong>${acc.email}</strong>
+                        ${acc.name ? `<div style="color: #666; font-size: 0.9em;">${acc.name}</div>` : ''}
+                      </div>
+                      <div style="width: 100px;">
+                        ${acc.status}
+                      </div>
+                      <div style="width: 120px;">
+                        Limit: ${acc.daily_limit.toLocaleString()}/day
+                      </div>
+                      <div style="width: 150px;">
+                        Sent: ${acc.emails_sent_count.toLocaleString()} | Replies: ${acc.unique_replied_count}
+                      </div>
+                      <div style="width: 150px;">
+                        Interested: ${acc.interested_leads_count} | Bounced: ${acc.bounced_count}
+                      </div>
+                      <div style="width: 120px;">
+                        <span class="${accBadgeClass}">
+                          ${accBadgeLabel}
+                        </span>
+                      </div>
                     </div>
-                    <div style="width: 100px;">
-                      ${acc.status}
+                  </td>
+                </tr>
+              `;
+            } else {
+              // Instantly layout
+              html += `
+                <tr class="account-detail-row" data-workspace="${wsIndex}">
+                  <td colspan="6">
+                    <div style="display: flex; gap: 20px; align-items: center;">
+                      <div style="flex: 1;">
+                        <strong>${acc.email}</strong>
+                      </div>
+                      <div style="width: 100px;">
+                        ${acc.status}
+                      </div>
+                      <div style="width: 100px;">
+                        Limit: ${acc.daily_limit.toLocaleString()}/day
+                      </div>
+                      <div style="width: 100px;">
+                        Warmup: ${acc.warmup_status}
+                      </div>
+                      <div style="width: 80px;">
+                        Score: ${acc.warmup_score}%
+                      </div>
+                      <div style="width: 120px;">
+                        <span class="${accBadgeClass}">
+                          ${accBadgeLabel}
+                        </span>
+                      </div>
                     </div>
-                    <div style="width: 100px;">
-                      Limit: ${acc.daily_limit.toLocaleString()}/day
-                    </div>
-                    <div style="width: 100px;">
-                      Warmup: ${acc.warmup_status}
-                    </div>
-                    <div style="width: 80px;">
-                      Score: ${acc.warmup_score}%
-                    </div>
-                    <div style="width: 120px;">
-                      <span class="${accBadgeClass}">
-                        ${accBadgeLabel}
-                      </span>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            `;
+                  </td>
+                </tr>
+              `;
+            }
           });
         });
 

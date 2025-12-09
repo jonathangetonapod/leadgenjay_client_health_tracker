@@ -25,6 +25,7 @@ CAMPAIGN_STATUSES = [0, 1, 2, 3, 4, -99, -1, -2]
 EMAIL_BISON_BASE_URL = "https://send.leadgenjay.com"
 EMAIL_BISON_CAMPAIGNS_URL = f"{EMAIL_BISON_BASE_URL}/api/campaigns"
 EMAIL_BISON_STATS_URL = f"{EMAIL_BISON_BASE_URL}/api/campaigns"  # append /{id}/stats
+EMAIL_BISON_ACCOUNTS_URL = f"{EMAIL_BISON_BASE_URL}/api/sender-emails"
 
 # Default sheet + tab (gid) – can be overridden by sheet_url query param
 DEFAULT_SHEET_URL = (
@@ -716,6 +717,136 @@ def process_instantly_accounts(
     }
 
 
+def fetch_emailbison_accounts(api_key: str) -> list[dict]:
+    """
+    Fetches email accounts from Email Bison for a workspace.
+    Returns a list of sender email account objects.
+    Handles pagination automatically.
+    """
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    all_accounts = []
+    page = 1
+
+    try:
+        while True:
+            params = {"page": page}
+
+            resp = requests.get(
+                EMAIL_BISON_ACCOUNTS_URL,
+                headers=headers,
+                params=params,
+                timeout=30,
+            )
+
+            if not resp.ok:
+                print(
+                    f"[Email Bison] error fetching accounts (page {page}): {resp.status_code} {resp.text}"
+                )
+                resp.raise_for_status()
+
+            data = resp.json()
+            accounts = data.get("data", [])
+            all_accounts.extend(accounts)
+
+            # Check if there are more pages
+            # Laravel pagination typically includes 'meta' or 'links'
+            meta = data.get("meta", {})
+            links = data.get("links", {})
+
+            current_page = meta.get("current_page", page)
+            last_page = meta.get("last_page", 1)
+            next_url = links.get("next")
+
+            print(f"[Email Bison] Fetched page {current_page}/{last_page} ({len(accounts)} accounts)")
+
+            # Break if no more pages
+            if not next_url or current_page >= last_page:
+                break
+
+            page += 1
+
+        print(f"[Email Bison] Found total of {len(all_accounts)} email accounts across {page} page(s)")
+        return all_accounts
+    except Exception as e:
+        print(f"[Email Bison] Exception fetching accounts: {e}")
+        return all_accounts if all_accounts else []
+
+
+def process_emailbison_accounts(
+    row: dict,
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """
+    Processes email accounts for an Email Bison workspace.
+    Returns account data with health status.
+    """
+    api_key = row["api_key"]
+    label = row["workspace_id"]
+
+    workspace_name = label
+    workspace_id = label
+
+    # Fetch all email accounts
+    accounts = fetch_emailbison_accounts(api_key)
+
+    # Process accounts into display format
+    processed_accounts = []
+    status_breakdown = {}
+
+    for account in accounts:
+        status = account.get("status", "Unknown")
+
+        # Track status breakdown for debugging
+        status_breakdown[status] = status_breakdown.get(status, 0) + 1
+
+        # Determine health based on status
+        # Email Bison uses string statuses like "Connected", "Disconnected", etc.
+        if status == "Connected":
+            health = "healthy"
+        else:
+            health = "at_risk"
+
+        # Extract tags
+        tags = account.get("tags", [])
+        tag_names = [tag.get("name") for tag in tags if tag.get("name")]
+
+        processed_accounts.append({
+            "email": account.get("email", "Unknown"),
+            "name": account.get("name", ""),
+            "status": status,
+            "daily_limit": account.get("daily_limit", 0),
+            "emails_sent_count": account.get("emails_sent_count", 0),
+            "total_replied_count": account.get("total_replied_count", 0),
+            "unique_replied_count": account.get("unique_replied_count", 0),
+            "total_opened_count": account.get("total_opened_count", 0),
+            "bounced_count": account.get("bounced_count", 0),
+            "interested_leads_count": account.get("interested_leads_count", 0),
+            "health": health,
+            "tags": tag_names,
+            "type": account.get("type", ""),
+        })
+
+    print(
+        f"[Email Bison] workspace={workspace_name} | "
+        f"Processed {len(processed_accounts)} email accounts | "
+        f"Status breakdown: {status_breakdown}"
+    )
+
+    return {
+        "workspace_id": workspace_id,
+        "workspace_name": workspace_name,
+        "label": label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "accounts": processed_accounts,
+        "total_accounts": len(processed_accounts),
+    }
+
+
 @app.get("/multi-overview")
 def multi_overview():
     """
@@ -747,7 +878,7 @@ def multi_overview():
         if platform == "emailbison":
             sheet_gid = SHEET_GID_EMAILBISON
             if view == "email_accounts":
-                return jsonify({"error": "Email Accounts view is not yet implemented for Email Bison"}), 501
+                process_func = process_emailbison_accounts
             else:
                 process_func = process_single_emailbison_account
             platform_name = "Email Bison"
