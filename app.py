@@ -3,6 +3,7 @@ import csv
 from io import StringIO
 from datetime import date
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from flask import Flask, request, jsonify, render_template
@@ -162,6 +163,63 @@ def fetch_workspace_info(api_key: str) -> dict:
     }
 
 
+def fetch_single_status(
+    status: int,
+    start_date: str,
+    end_date: str,
+    headers: dict,
+    workspace_label: str | None = None,
+) -> tuple[int, dict | None]:
+    """
+    Fetches analytics for a single campaign status.
+    Returns (status, data) tuple. data is None if request failed.
+    """
+    params = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "campaign_status": status,
+    }
+
+    try:
+        resp = requests.get(
+            INSTANTLY_OVERVIEW_URL,
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+
+        # 400/404 = no campaigns / bad filter → just skip this status
+        if resp.status_code in (400, 404):
+            print(
+                f"[Instantly] {workspace_label or ''} "
+                f"status {status}: {resp.status_code} (no campaigns / bad filter)"
+            )
+            return (status, None)
+
+        # 5xx or 429 = Instantly side issue or rate limit → log + skip
+        if resp.status_code >= 500 or resp.status_code == 429:
+            print(
+                f"[Instantly] {workspace_label or ''} "
+                f"status {status}: server error {resp.status_code}, skipping. "
+                f"Body: {resp.text}"
+            )
+            return (status, None)
+
+        # Any other non-OK → treat as real error so we can fix it
+        if not resp.ok:
+            print(
+                f"[Instantly] error for {workspace_label or ''} "
+                f"campaign_status={status}: {resp.status_code} {resp.text}"
+            )
+            resp.raise_for_status()
+
+        data = resp.json()
+        return (status, data)
+    except Exception as e:
+        print(f"[Instantly] Exception fetching status {status} for {workspace_label}: {e}")
+        return (status, None)
+
+
 def aggregate_overview_for_workspace(
     start_date: str,
     end_date: str,
@@ -169,7 +227,7 @@ def aggregate_overview_for_workspace(
     workspace_label: str | None = None,
 ) -> dict:
     """
-    Loops over all CAMPAIGN_STATUSES, calls Instantly overview for each,
+    Loops over all CAMPAIGN_STATUSES, calls Instantly overview for each IN PARALLEL,
     and builds a combined dict by taking the MAX of each numeric metric
     across statuses (not a sum).
 
@@ -184,61 +242,41 @@ def aggregate_overview_for_workspace(
         "Authorization": f"Bearer {token}",
     }
 
-    base_params = {
-        "start_date": start_date,
-        "end_date": end_date,
-    }
-
     combined_max: dict[str, float] = {}
     by_status: dict[int, dict] = {}
 
-    for status in CAMPAIGN_STATUSES:
-        params = dict(base_params)
-        params["campaign_status"] = status
+    # Parallelize the 8 status calls
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        # Submit all status calls
+        futures = {
+            executor.submit(
+                fetch_single_status,
+                status,
+                start_date,
+                end_date,
+                headers,
+                workspace_label,
+            ): status
+            for status in CAMPAIGN_STATUSES
+        }
 
-        resp = requests.get(
-            INSTANTLY_OVERVIEW_URL,
-            headers=headers,
-            params=params,
-            timeout=30,
-        )
+        # Collect results as they complete
+        for future in as_completed(futures):
+            status, data = future.result()
 
-        # 400/404 = no campaigns / bad filter → just skip this status
-        if resp.status_code in (400, 404):
-            print(
-                f"[Instantly] {workspace_label or ''} "
-                f"status {status}: {resp.status_code} (no campaigns / bad filter)"
-            )
-            continue
-
-        # 5xx or 429 = Instantly side issue or rate limit → log + skip
-        if resp.status_code >= 500 or resp.status_code == 429:
-            print(
-                f"[Instantly] {workspace_label or ''} "
-                f"status {status}: server error {resp.status_code}, skipping. "
-                f"Body: {resp.text}"
-            )
-            continue
-
-        # Any other non-OK → treat as real error so we can fix it
-        if not resp.ok:
-            print(
-                f"[Instantly] error for {workspace_label or ''} "
-                f"campaign_status={status}: {resp.status_code} {resp.text}"
-            )
-            resp.raise_for_status()
-
-        data = resp.json()
-        by_status[status] = data
-
-        # Update per-metric max across statuses
-        for key, value in data.items():
-            if not isinstance(value, (int, float)):
+            if data is None:
                 continue
 
-            current = combined_max.get(key)
-            if current is None or value > current:
-                combined_max[key] = float(value)
+            by_status[status] = data
+
+            # Update per-metric max across statuses
+            for key, value in data.items():
+                if not isinstance(value, (int, float)):
+                    continue
+
+                current = combined_max.get(key)
+                if current is None or value > current:
+                    combined_max[key] = float(value)
 
     # Cast floats -> ints for cleaner JSON
     combined_ints = {k: int(v) for k, v in combined_max.items()}
@@ -249,13 +287,78 @@ def aggregate_overview_for_workspace(
     }
 
 
+def process_single_workspace(
+    row: dict,
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """
+    Processes a single workspace: fetches info and analytics.
+    Returns a dict with all the workspace data.
+    """
+    api_key = row["api_key"]
+    label = row["workspace_id"]
+
+    workspace_name = None
+    workspace_id = label
+
+    # Try to get workspace name with this API key
+    try:
+        info = fetch_workspace_info(api_key)
+        workspace_name = info.get("workspace_name") or label
+        workspace_id = info.get("workspace_id") or label
+    except Exception as e:
+        print(f"[Instantly] error fetching workspace info for {label}:", e)
+        workspace_name = label
+
+    # Pull overview for this workspace
+    overview = aggregate_overview_for_workspace(
+        start_date=start_date,
+        end_date=end_date,
+        api_key=api_key,
+        workspace_label=workspace_name,
+    )
+    combined = overview["combined"]
+
+    emails_sent = combined.get("emails_sent_count", 0)
+    opportunities = combined.get("total_opportunities", 0)
+    replies = combined.get("reply_count_unique", 0)
+
+    health = classify_health(emails_sent, opportunities)
+
+    print(
+        f"[Instantly] workspace={workspace_name} | "
+        f"{start_date} -> {end_date} | "
+        f"sent={emails_sent} replies={replies} opps={opportunities} "
+        f"status={health}"
+    )
+
+    summary = {
+        "emails_sent": emails_sent,
+        "replies": replies,
+        "opportunities": opportunities,
+        "health": health,
+    }
+
+    return {
+        "workspace_id": workspace_id,
+        "workspace_name": workspace_name,
+        "label": label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "combined": combined,
+        "summary": summary,
+        "health": health,
+    }
+
+
 @app.get("/multi-overview")
 def multi_overview():
     """
     GET /multi-overview?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD&sheet_url=...
 
     Uses a Google Sheet (with workspace_id + api_key) to:
-      - Loop through all workspaces
+      - Loop through all workspaces IN PARALLEL
       - Pull Instantly analytics for the date range
       - Compute per-workspace summary + health status
       - Return a JSON with:
@@ -284,67 +387,34 @@ def multi_overview():
             "opportunities": 0,
         }
 
-        for row in workspaces:
-            api_key = row["api_key"]
-            label = row["workspace_id"]
-
-            workspace_name = None
-            workspace_id = label
-
-            # 2) Try to get workspace name with this API key
-            try:
-                info = fetch_workspace_info(api_key)
-                workspace_name = info.get("workspace_name") or label
-                workspace_id = info.get("workspace_id") or label
-            except Exception as e:
-                print(f"[Instantly] error fetching workspace info for {label}:", e)
-                workspace_name = label
-
-            # 3) Pull overview for this workspace
-            overview = aggregate_overview_for_workspace(
-                start_date=start_date,
-                end_date=end_date,
-                api_key=api_key,
-                workspace_label=workspace_name,
-            )
-            combined = overview["combined"]
-
-            emails_sent = combined.get("emails_sent_count", 0)
-            opportunities = combined.get("total_opportunities", 0)
-            replies = combined.get("reply_count_unique", 0)
-
-            health = classify_health(emails_sent, opportunities)
-
-            print(
-                f"[Instantly] workspace={workspace_name} | "
-                f"{start_date} -> {end_date} | "
-                f"sent={emails_sent} replies={replies} opps={opportunities} "
-                f"status={health}"
-            )
-
-            summary = {
-                "emails_sent": emails_sent,
-                "replies": replies,
-                "opportunities": opportunities,
-                "health": health,
+        # 2) Process all workspaces in parallel
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            # Submit all workspace processing tasks
+            futures = {
+                executor.submit(
+                    process_single_workspace,
+                    row,
+                    start_date,
+                    end_date,
+                ): row
+                for row in workspaces
             }
 
-            totals["emails_sent"] += emails_sent
-            totals["replies"] += replies
-            totals["opportunities"] += opportunities
+            # Collect results as they complete
+            for future in as_completed(futures):
+                try:
+                    workspace_result = future.result()
+                    results.append(workspace_result)
 
-            results.append(
-                {
-                    "workspace_id": workspace_id,
-                    "workspace_name": workspace_name,
-                    "label": label,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "combined": combined,
-                    "summary": summary,
-                    "health": health,
-                }
-            )
+                    # Update totals
+                    summary = workspace_result["summary"]
+                    totals["emails_sent"] += summary["emails_sent"]
+                    totals["replies"] += summary["replies"]
+                    totals["opportunities"] += summary["opportunities"]
+                except Exception as e:
+                    row = futures[future]
+                    print(f"[Instantly] Error processing workspace {row['workspace_id']}: {e}")
+                    traceback.print_exc()
 
         return jsonify(
             {
