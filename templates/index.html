@@ -1192,26 +1192,29 @@
               const tags = acc.tags && acc.tags.length > 0 ? acc.tags.join(', ') : 'None';
               html += `
                 <tr class="account-detail-row" data-workspace="${wsIndex}">
-                  <td colspan="7">
-                    <div style="display: flex; gap: 20px; align-items: center;">
-                      <div style="flex: 1;">
+                  <td colspan="7" style="padding: 8px 16px;">
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap; overflow-x: auto;">
+                      <div style="flex: 0 1 300px; min-width: 200px;">
                         <strong>${acc.email}</strong>
                         ${acc.name ? `<div style="color: #666; font-size: 0.9em;">${acc.name}</div>` : ''}
                       </div>
-                      <div style="width: 100px;">
+                      <div style="flex: 0 0 100px; font-size: 0.9em;">
                         ${acc.status}
                       </div>
-                      <div style="width: 120px;">
-                        Limit: ${acc.daily_limit.toLocaleString()}/day
+                      <div style="flex: 0 0 90px; font-size: 0.9em;">
+                        ${acc.daily_limit}/day
                       </div>
-                      <div style="width: 150px;">
-                        Sent: ${acc.emails_sent_count.toLocaleString()} | Replies: ${acc.unique_replied_count}
+                      <div style="flex: 0 0 120px; font-size: 0.9em;">
+                        Sent: ${acc.emails_sent_count.toLocaleString()}
                       </div>
-                      <div style="width: 150px;">
-                        Interested: ${acc.interested_leads_count} | Bounced: ${acc.bounced_count}
+                      <div style="flex: 0 0 100px; font-size: 0.9em;">
+                        Replies: ${acc.unique_replied_count}
                       </div>
-                      <div style="width: 120px;">
-                        <span class="${accBadgeClass}">
+                      <div style="flex: 0 0 100px; font-size: 0.9em;">
+                        Int: ${acc.interested_leads_count}
+                      </div>
+                      <div style="flex: 0 0 80px;">
+                        <span class="${accBadgeClass}" style="font-size: 0.85em; padding: 2px 6px;">
                           ${accBadgeLabel}
                         </span>
                       </div>
@@ -1223,25 +1226,25 @@
               // Instantly layout
               html += `
                 <tr class="account-detail-row" data-workspace="${wsIndex}">
-                  <td colspan="7">
-                    <div style="display: flex; gap: 20px; align-items: center;">
-                      <div style="flex: 1;">
+                  <td colspan="7" style="padding: 8px 16px;">
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap; overflow-x: auto;">
+                      <div style="flex: 0 1 300px; min-width: 200px;">
                         <strong>${acc.email}</strong>
                       </div>
-                      <div style="width: 100px;">
+                      <div style="flex: 0 0 100px; font-size: 0.9em;">
                         ${acc.status}
                       </div>
-                      <div style="width: 100px;">
-                        Limit: ${acc.daily_limit.toLocaleString()}/day
+                      <div style="flex: 0 0 90px; font-size: 0.9em;">
+                        ${acc.daily_limit}/day
                       </div>
-                      <div style="width: 100px;">
-                        Warmup: ${acc.warmup_status}
+                      <div style="flex: 0 0 100px; font-size: 0.9em;">
+                        ${acc.warmup_status}
                       </div>
-                      <div style="width: 80px;">
-                        Score: ${acc.warmup_score}%
+                      <div style="flex: 0 0 80px; font-size: 0.9em;">
+                        ${acc.warmup_score}%
                       </div>
-                      <div style="width: 120px;">
-                        <span class="${accBadgeClass}">
+                      <div style="flex: 0 0 80px;">
+                        <span class="${accBadgeClass}" style="font-size: 0.85em; padding: 2px 6px;">
                           ${accBadgeLabel}
                         </span>
                       </div>
