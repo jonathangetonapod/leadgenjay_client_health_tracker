@@ -1073,6 +1073,9 @@
       function renderEmailAccountsTable(workspaces) {
         const resultsDiv = document.getElementById("results");
 
+        // Store workspaces data for webhook access
+        lastWorkspaces = workspaces;
+
         if (!workspaces.length) {
           resultsDiv.innerHTML = "<div class='no-results'>No workspaces found.</div>";
           return;
@@ -1088,6 +1091,7 @@
                 <th style="width:100px">Errors</th>
                 <th style="width:100px">Paused</th>
                 <th style="width:120px">Health</th>
+                <th style="width:120px">Webhook</th>
               </tr>
             </thead>
             <tbody>
@@ -1148,6 +1152,17 @@
                   ${wsBadgeLabel}
                 </span>
               </td>
+              <td onclick="event.stopPropagation();">
+                ${errorCount > 0 ? `
+                  <button
+                    class="webhook-btn"
+                    onclick="sendWebhookForAccounts(${wsIndex})"
+                    id="webhook-btn-${wsIndex}">
+                    Send Webhook
+                  </button>
+                  <span id="webhook-status-${wsIndex}" class="webhook-status"></span>
+                ` : '<span style="color: #999;">No errors</span>'}
+              </td>
             </tr>
           `;
 
@@ -1176,7 +1191,7 @@
               const tags = acc.tags && acc.tags.length > 0 ? acc.tags.join(', ') : 'None';
               html += `
                 <tr class="account-detail-row" data-workspace="${wsIndex}">
-                  <td colspan="6">
+                  <td colspan="7">
                     <div style="display: flex; gap: 20px; align-items: center;">
                       <div style="flex: 1;">
                         <strong>${acc.email}</strong>
@@ -1207,7 +1222,7 @@
               // Instantly layout
               html += `
                 <tr class="account-detail-row" data-workspace="${wsIndex}">
-                  <td colspan="6">
+                  <td colspan="7">
                     <div style="display: flex; gap: 20px; align-items: center;">
                       <div style="flex: 1;">
                         <strong>${acc.email}</strong>
@@ -1298,6 +1313,89 @@
               webhook_url: webhookUrl,
               workspace: payload,
               note: note,
+            }),
+          });
+
+          const data = await resp.json();
+
+          if (!resp.ok || !data.success) {
+            statusCell.innerHTML = "<span class='error-text'>Error</span>";
+            console.error("Webhook error:", data);
+            return;
+          }
+
+          statusCell.innerHTML = "<span class='muted'>Sent ✓</span>";
+        } catch (err) {
+          console.error("Webhook exception:", err);
+          statusCell.innerHTML = "<span class='error-text'>Error</span>";
+        }
+      }
+
+      async function sendWebhookForAccounts(index) {
+        const webhookInput = document.getElementById("webhookUrl");
+        const webhookUrl = webhookInput.value.trim();
+        const statusCell = document.getElementById(`webhook-status-${index}`);
+
+        if (!webhookUrl) {
+          statusCell.innerHTML =
+            "<span class='error-text'>Add webhook URL above</span>";
+          return;
+        }
+
+        const ws = lastWorkspaces[index];
+        if (!ws) {
+          statusCell.innerHTML =
+            "<span class='error-text'>No workspace data</span>";
+          return;
+        }
+
+        // Filter accounts to only include those needing attention (at_risk)
+        const accounts = ws.accounts || [];
+        const problemAccounts = accounts.filter(acc => acc.health === "at_risk");
+
+        if (problemAccounts.length === 0) {
+          statusCell.innerHTML =
+            "<span class='muted'>No errors to send</span>";
+          return;
+        }
+
+        const workspaceName = ws.workspace_name || ws.label || "Unknown workspace";
+        const errorCount = problemAccounts.length;
+
+        // Format as a pretty Slack message with emojis for different error types
+        let messageText = `🚨 *EMAIL ACCOUNT ALERT*\n`;
+        messageText += `━━━━━━━━━━━━━━━━━━━━\n`;
+        messageText += `*Workspace:* ${workspaceName}\n`;
+        messageText += `*Status:* ${errorCount} account${errorCount > 1 ? 's' : ''} disconnected\n\n`;
+        messageText += `*Affected Accounts:*\n`;
+
+        problemAccounts.forEach(acc => {
+          // Add emoji based on error type
+          let emoji = '🔴';
+          if (acc.status.includes('Connection')) emoji = '🔌';
+          else if (acc.status.includes('Bounce')) emoji = '⚠️';
+          else if (acc.status.includes('Sending')) emoji = '📤';
+
+          messageText += `${emoji} \`${acc.email}\`\n   ↳ _${acc.status}_\n`;
+        });
+
+        const payload = {
+          text: messageText
+        };
+
+        statusCell.textContent = "Sending…";
+        statusCell.className = "muted";
+
+        try {
+          const resp = await fetch("/send-webhook", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              webhook_url: webhookUrl,
+              workspace: payload,
+              note: `${errorCount} email account${errorCount > 1 ? 's' : ''} need${errorCount === 1 ? 's' : ''} attention`,
             }),
           });
 
