@@ -567,6 +567,57 @@
       .toggle-option:hover:not(.active) {
         color: var(--text-main);
       }
+
+      /* Collapsible rows for email accounts */
+      .workspace-summary-row {
+        cursor: pointer;
+        font-weight: 500;
+      }
+
+      .workspace-summary-row:hover {
+        background: #f3f4f6 !important;
+      }
+
+      .expand-icon {
+        display: inline-block;
+        transition: transform 0.2s ease;
+        margin-right: 5px;
+      }
+
+      .expand-icon.expanded {
+        transform: rotate(90deg);
+      }
+
+      .account-detail-row {
+        display: none;
+        background: #fafafa !important;
+      }
+
+      .account-detail-row.visible {
+        display: table-row;
+      }
+
+      .account-detail-row td {
+        padding-left: 30px;
+        font-size: 11px;
+      }
+
+      .summary-stats {
+        display: flex;
+        gap: 15px;
+        font-size: 11px;
+        margin-top: 3px;
+      }
+
+      .summary-stat {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .summary-stat-value {
+        font-weight: 600;
+      }
     </style>
   </head>
   <body>
@@ -627,6 +678,26 @@
             </div>
           </div>
 
+          <div class="platform-toggle-container">
+            <span class="platform-toggle-label">View:</span>
+            <div class="toggle-switch">
+              <button
+                id="toggleCampaignHealth"
+                class="toggle-option active"
+                onclick="switchView('campaign_health')"
+              >
+                Campaign Health
+              </button>
+              <button
+                id="toggleEmailAccounts"
+                class="toggle-option"
+                onclick="switchView('email_accounts')"
+              >
+                Email Accounts
+              </button>
+            </div>
+          </div>
+
           <div class="controls-row">
             <div class="field" style="flex-basis: 100%">
               <label for="sheetUrl">Google Sheet URL (view-only)</label>
@@ -683,7 +754,7 @@
           <div id="loading" class="loading hidden">
             <div class="loading-top">
               <div class="loading-dot"></div>
-              <div>Collecting workspaces &amp; Instantly stats…</div>
+              <div id="loadingText">Collecting workspaces &amp; stats…</div>
             </div>
             <div class="loading-bar">
               <div class="loading-bar-fill"></div>
@@ -692,8 +763,8 @@
 
           <div style="margin-top: 14px">
             <div class="results-panel-title">
-              Workspace Results
-              <span class="muted">(one row per Instantly workspace)</span>
+              <span id="resultsTitle">Workspace Results</span>
+              <span class="muted" id="resultsSubtitle">(one row per workspace)</span>
             </div>
 
             <div id="results"></div>
@@ -748,6 +819,7 @@
     <script>
       let lastWorkspaces = [];
       let currentPlatform = 'instantly'; // Default platform
+      let currentView = 'campaign_health'; // Default view
 
       function switchPlatform(platform) {
         currentPlatform = platform;
@@ -770,6 +842,41 @@
         lastWorkspaces = [];
 
         console.log('Switched to platform:', platform);
+      }
+
+      function switchView(view) {
+        currentView = view;
+
+        // Update toggle button states
+        const campaignHealthBtn = document.getElementById('toggleCampaignHealth');
+        const emailAccountsBtn = document.getElementById('toggleEmailAccounts');
+
+        if (view === 'campaign_health') {
+          campaignHealthBtn.classList.add('active');
+          emailAccountsBtn.classList.remove('active');
+        } else {
+          campaignHealthBtn.classList.remove('active');
+          emailAccountsBtn.classList.add('active');
+        }
+
+        // Update UI labels based on view
+        const resultsTitle = document.getElementById('resultsTitle');
+        const resultsSubtitle = document.getElementById('resultsSubtitle');
+
+        if (view === 'campaign_health') {
+          resultsTitle.textContent = 'Workspace Results';
+          resultsSubtitle.textContent = '(campaign health per workspace)';
+        } else {
+          resultsTitle.textContent = 'Email Account Results';
+          resultsSubtitle.textContent = '(email account health & status)';
+        }
+
+        // Clear previous results when switching views
+        const resultsDiv = document.getElementById('results');
+        resultsDiv.innerHTML = '';
+        lastWorkspaces = [];
+
+        console.log('Switched to view:', view);
       }
 
       function setDefaultDates() {
@@ -830,6 +937,7 @@
           end_date: endDate,
           sheet_url: sheetUrl,
           platform: currentPlatform,
+          view: currentView,
         });
 
         try {
@@ -856,7 +964,23 @@
             return;
           }
 
-          let html = `
+          // Check if this is email accounts view
+          if (data.view === 'email_accounts') {
+            renderEmailAccountsTable(workspaces);
+          } else {
+            renderCampaignHealthTable(workspaces);
+          }
+        } catch (err) {
+          console.error(err);
+          resultsDiv.innerHTML = `<div class="error-text">Unexpected error: ${err}</div>`;
+        } finally {
+          showLoading(false);
+        }
+      }
+
+      function renderCampaignHealthTable(workspaces) {
+        const resultsDiv = document.getElementById("results");
+        let html = `
             <table>
               <thead>
                 <tr>
@@ -944,12 +1068,150 @@
 
           html += "</tbody></table>";
           resultsDiv.innerHTML = html;
-        } catch (err) {
-          console.error(err);
-          resultsDiv.innerHTML = `<div class="error-text">Unexpected error: ${err}</div>`;
-        } finally {
-          showLoading(false);
+      }
+
+      function renderEmailAccountsTable(workspaces) {
+        const resultsDiv = document.getElementById("results");
+
+        if (!workspaces.length) {
+          resultsDiv.innerHTML = "<div class='no-results'>No workspaces found.</div>";
+          return;
         }
+
+        let html = `
+          <table>
+            <thead>
+              <tr>
+                <th>Workspace</th>
+                <th style="width:100px">Total Accounts</th>
+                <th style="width:100px">Active</th>
+                <th style="width:100px">Errors</th>
+                <th style="width:100px">Paused</th>
+                <th style="width:120px">Health</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+
+        workspaces.forEach((ws, wsIndex) => {
+          const accounts = ws.accounts || [];
+          const totalAccounts = accounts.length;
+
+          // Count accounts by status
+          let activeCount = 0;
+          let errorCount = 0;
+          let pausedCount = 0;
+
+          accounts.forEach(acc => {
+            if (acc.health === "healthy") activeCount++;
+            else if (acc.health === "at_risk") errorCount++;
+            else if (acc.health === "early") pausedCount++;
+          });
+
+          // Determine overall workspace health
+          let wsHealth = "healthy";
+          let wsRowClass = "row-healthy";
+          let wsBadgeClass = "badge badge-healthy";
+          let wsBadgeLabel = "🟢 All Good";
+
+          if (errorCount > 0) {
+            wsHealth = "at_risk";
+            wsRowClass = "row-at_risk";
+            wsBadgeClass = "badge badge-at_risk";
+            wsBadgeLabel = `🔴 ${errorCount} Error${errorCount > 1 ? 's' : ''}`;
+          } else if (pausedCount === totalAccounts) {
+            wsHealth = "early";
+            wsRowClass = "row-early";
+            wsBadgeClass = "badge badge-early";
+            wsBadgeLabel = "🟡 All Paused";
+          } else if (pausedCount > 0) {
+            wsHealth = "early";
+            wsRowClass = "row-early";
+            wsBadgeClass = "badge badge-early";
+            wsBadgeLabel = `🟡 ${pausedCount} Paused`;
+          }
+
+          // Summary row
+          html += `
+            <tr class="workspace-summary-row ${wsRowClass}" onclick="toggleAccounts(${wsIndex})">
+              <td>
+                <span class="expand-icon" id="expand-icon-${wsIndex}">▶</span>
+                <span class="workspace-name">${ws.workspace_name}</span>
+                <div class="workspace-id">${ws.workspace_id}</div>
+              </td>
+              <td><strong>${totalAccounts}</strong></td>
+              <td><strong>${activeCount}</strong></td>
+              <td><strong>${errorCount}</strong></td>
+              <td><strong>${pausedCount}</strong></td>
+              <td>
+                <span class="${wsBadgeClass}">
+                  ${wsBadgeLabel}
+                </span>
+              </td>
+            </tr>
+          `;
+
+          // Detail rows (collapsed by default)
+          accounts.forEach((acc, accIndex) => {
+            const health = acc.health || "early";
+            let accBadgeClass = "";
+            let accBadgeLabel = "";
+
+            if (health === "at_risk") {
+              accBadgeClass = "badge badge-at_risk";
+              accBadgeLabel = "🔴 Error";
+            } else if (health === "early") {
+              accBadgeClass = "badge badge-early";
+              accBadgeLabel = "🟡 Paused";
+            } else {
+              accBadgeClass = "badge badge-healthy";
+              accBadgeLabel = "🟢 Active";
+            }
+
+            html += `
+              <tr class="account-detail-row" data-workspace="${wsIndex}">
+                <td colspan="6">
+                  <div style="display: flex; gap: 20px; align-items: center;">
+                    <div style="flex: 1;">
+                      <strong>${acc.email}</strong>
+                    </div>
+                    <div style="width: 100px;">
+                      ${acc.status}
+                    </div>
+                    <div style="width: 100px;">
+                      Limit: ${acc.daily_limit.toLocaleString()}/day
+                    </div>
+                    <div style="width: 100px;">
+                      Warmup: ${acc.warmup_status}
+                    </div>
+                    <div style="width: 80px;">
+                      Score: ${acc.warmup_score}%
+                    </div>
+                    <div style="width: 120px;">
+                      <span class="${accBadgeClass}">
+                        ${accBadgeLabel}
+                      </span>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            `;
+          });
+        });
+
+        html += "</tbody></table>";
+        resultsDiv.innerHTML = html;
+      }
+
+      function toggleAccounts(workspaceIndex) {
+        const icon = document.getElementById(`expand-icon-${workspaceIndex}`);
+        const detailRows = document.querySelectorAll(`.account-detail-row[data-workspace="${workspaceIndex}"]`);
+
+        detailRows.forEach(row => {
+          row.classList.toggle('visible');
+        });
+
+        icon.classList.toggle('expanded');
       }
 
       async function sendWebhook(index) {

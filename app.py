@@ -16,6 +16,7 @@ INSTANTLY_API_KEY = os.getenv("INSTANTLY_API_KEY")
 
 INSTANTLY_OVERVIEW_URL = "https://api.instantly.ai/api/v2/campaigns/analytics/overview"
 INSTANTLY_WORKSPACE_URL = "https://api.instantly.ai/api/v2/workspaces/current"
+INSTANTLY_ACCOUNTS_URL = "https://api.instantly.ai/api/v2/accounts"
 
 # Campaign statuses to scan
 CAMPAIGN_STATUSES = [0, 1, 2, 3, 4, -99, -1, -2]
@@ -561,6 +562,160 @@ def process_single_workspace(
     }
 
 
+def fetch_instantly_accounts(api_key: str, limit: int = 100) -> list[dict]:
+    """
+    Fetches email accounts from Instantly for a workspace.
+    Returns a list of account objects.
+    """
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    all_accounts = []
+    starting_after = None
+
+    try:
+        # Fetch accounts with pagination
+        while True:
+            params = {"limit": limit}
+            if starting_after:
+                params["starting_after"] = starting_after
+
+            resp = requests.get(
+                INSTANTLY_ACCOUNTS_URL,
+                headers=headers,
+                params=params,
+                timeout=30,
+            )
+
+            if not resp.ok:
+                print(
+                    f"[Instantly] error fetching accounts: {resp.status_code} {resp.text}"
+                )
+                resp.raise_for_status()
+
+            data = resp.json()
+            items = data.get("items", [])
+            all_accounts.extend(items)
+
+            # Check if there are more pages
+            starting_after = data.get("next_starting_after")
+            if not starting_after:
+                break
+
+        print(f"[Instantly] Found {len(all_accounts)} email accounts")
+        return all_accounts
+    except Exception as e:
+        print(f"[Instantly] Exception fetching accounts: {e}")
+        return []
+
+
+def process_instantly_accounts(
+    row: dict,
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """
+    Processes email accounts for an Instantly workspace.
+    Returns account data with health status.
+    """
+    api_key = row["api_key"]
+    label = row["workspace_id"]
+
+    workspace_name = None
+    workspace_id = label
+
+    # Try to get workspace name
+    try:
+        info = fetch_workspace_info(api_key)
+        workspace_name = info.get("workspace_name") or label
+        workspace_id = info.get("workspace_id") or label
+    except Exception as e:
+        print(f"[Instantly] error fetching workspace info for {label}:", e)
+        workspace_name = label
+
+    # Fetch all email accounts
+    accounts = fetch_instantly_accounts(api_key)
+
+    # Map status codes to readable names
+    def get_status_name(status_code):
+        status_map = {
+            1: "Active",
+            2: "Paused",
+            -1: "Connection Error",
+            -2: "Soft Bounce Error",
+            -3: "Sending Error",
+        }
+        return status_map.get(status_code, f"Unknown ({status_code})")
+
+    # Map warmup status
+    def get_warmup_status_name(warmup_status):
+        if warmup_status == 1:
+            return "Active"
+        elif warmup_status == 0:
+            return "Inactive"
+        else:
+            return f"Unknown ({warmup_status})"
+
+    # Process accounts into display format
+    processed_accounts = []
+    status_breakdown = {}
+    status_code_breakdown = {}
+
+    for account in accounts:
+        status = account.get("status")
+        warmup_status = account.get("warmup_status")
+        warmup_score = account.get("stat_warmup_score", 0)
+
+        # Track status breakdown for debugging
+        status_name = get_status_name(status)
+        status_breakdown[status_name] = status_breakdown.get(status_name, 0) + 1
+
+        # Track raw status codes too
+        status_code_breakdown[f"code_{status}"] = status_code_breakdown.get(f"code_{status}", 0) + 1
+
+        # Determine health based on status
+        if status == 1:  # Active
+            health = "healthy"
+        elif status == 2:  # Paused
+            health = "early"
+        elif status in [-1, -2, -3]:  # Any error status (Connection, Soft Bounce, Sending)
+            health = "at_risk"
+        else:  # Unknown status
+            health = "at_risk"
+
+        display_status = get_status_name(status)
+
+        processed_accounts.append({
+            "email": account.get("email", "Unknown"),
+            "status": display_status,
+            "status_code": status,
+            "daily_limit": account.get("daily_limit", 0),
+            "warmup_status": get_warmup_status_name(warmup_status),
+            "warmup_score": account.get("stat_warmup_score", 0),
+            "last_used": account.get("timestamp_last_used", "Never"),
+            "health": health,
+            "provider_code": account.get("provider_code"),
+        })
+
+    print(
+        f"[Instantly] workspace={workspace_name} | "
+        f"Processed {len(processed_accounts)} email accounts | "
+        f"Status breakdown: {status_breakdown} | "
+        f"Raw codes: {status_code_breakdown}"
+    )
+
+    return {
+        "workspace_id": workspace_id,
+        "workspace_name": workspace_name,
+        "label": label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "accounts": processed_accounts,
+        "total_accounts": len(processed_accounts),
+    }
+
+
 @app.get("/multi-overview")
 def multi_overview():
     """
@@ -584,17 +739,24 @@ def multi_overview():
         start_date = request.args.get("start_date", default_start)
         end_date = request.args.get("end_date", default_end)
         platform = request.args.get("platform", "instantly")
+        view = request.args.get("view", "campaign_health")
 
         sheet_url = request.args.get("sheet_url", DEFAULT_SHEET_URL)
 
-        # Select the correct sheet GID based on platform
+        # Select the correct sheet GID and process function based on platform and view
         if platform == "emailbison":
             sheet_gid = SHEET_GID_EMAILBISON
-            process_func = process_single_emailbison_account
+            if view == "email_accounts":
+                return jsonify({"error": "Email Accounts view is not yet implemented for Email Bison"}), 501
+            else:
+                process_func = process_single_emailbison_account
             platform_name = "Email Bison"
-        else:
+        else:  # Instantly
             sheet_gid = SHEET_GID_INSTANTLY
-            process_func = process_single_workspace
+            if view == "email_accounts":
+                process_func = process_instantly_accounts
+            else:
+                process_func = process_single_workspace
             platform_name = "Instantly"
 
         print(f"[{platform_name}] Loading workspaces from sheet with gid={sheet_gid}")
@@ -628,11 +790,12 @@ def multi_overview():
                     workspace_result = future.result()
                     results.append(workspace_result)
 
-                    # Update totals
-                    summary = workspace_result["summary"]
-                    totals["emails_sent"] += summary["emails_sent"]
-                    totals["replies"] += summary["replies"]
-                    totals["opportunities"] += summary["opportunities"]
+                    # Update totals (only for campaign_health view)
+                    if view == "campaign_health" and "summary" in workspace_result:
+                        summary = workspace_result["summary"]
+                        totals["emails_sent"] += summary["emails_sent"]
+                        totals["replies"] += summary["replies"]
+                        totals["opportunities"] += summary["opportunities"]
                 except Exception as e:
                     row = futures[future]
                     print(f"[{platform_name}] Error processing workspace {row['workspace_id']}: {e}")
@@ -643,6 +806,8 @@ def multi_overview():
                 "sheet_url": sheet_url,
                 "start_date": start_date,
                 "end_date": end_date,
+                "platform": platform,
+                "view": view,
                 "workspace_count": len(workspaces),
                 "totals": totals,
                 "workspaces": results,
