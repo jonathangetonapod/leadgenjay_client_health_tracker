@@ -239,6 +239,7 @@
         font-size: 11px;
         box-shadow: none;
         background: var(--accent);
+        white-space: nowrap;
       }
 
       .chip {
@@ -1158,7 +1159,7 @@
                     class="webhook-btn"
                     onclick="sendWebhookForAccounts(${wsIndex})"
                     id="webhook-btn-${wsIndex}">
-                    Send Webhook
+                    📤 Send Alert
                   </button>
                   <span id="webhook-status-${wsIndex}" class="webhook-status"></span>
                 ` : '<span style="color: #999;">No errors</span>'}
