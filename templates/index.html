@@ -710,7 +710,7 @@
             </div>
           </div>
 
-          <div class="controls-row">
+          <div class="controls-row" id="dateFieldsRow">
             <div class="field">
               <label for="startDate">Start date</label>
               <input
@@ -858,6 +858,14 @@
         } else {
           campaignHealthBtn.classList.remove('active');
           emailAccountsBtn.classList.add('active');
+        }
+
+        // Show/hide date fields based on view
+        const dateFieldsRow = document.getElementById('dateFieldsRow');
+        if (view === 'campaign_health') {
+          dateFieldsRow.style.display = 'flex';
+        } else {
+          dateFieldsRow.style.display = 'none';
         }
 
         // Update UI labels based on view
