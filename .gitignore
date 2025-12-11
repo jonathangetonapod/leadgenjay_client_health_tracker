@@ -20,3 +20,19 @@ env/
 
 # Logs
 *.log
+
+# Test files
+test_*.py
+debug_*.py
+check_*.py
+investigate_*.py
+show_*.py
+quick_*.py
+fetch_positive_leads.py
+fetch_opportunities.py
+
+# Config files
+claude_desktop_config.json
+
+# Test results
+*.json
