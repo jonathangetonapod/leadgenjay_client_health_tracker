@@ -1,17 +1,26 @@
-# Instantly MCP Server Setup Guide
+# Lead Management MCP Server Setup Guide (Instantly + Bison)
 
 ## What is this?
 
-This MCP (Model Context Protocol) server allows Claude to automatically fetch lead responses and campaign statistics from Instantly.ai. Instead of manually logging into Instantly for each client, your team can now ask Claude to pull the data automatically!
+This MCP (Model Context Protocol) server allows Claude to automatically fetch lead responses and campaign statistics from **both Instantly.ai and Bison**. Instead of manually logging into each platform for each client, your team can now ask Claude to pull the data automatically!
 
 **Time savings:** 15-20 minutes per client → 2-3 minutes per client
 
 ## What Claude can do with this MCP
 
-1. **List all clients** - See all 54 workspaces you manage
+### Instantly.ai (56 clients)
+1. **List all Instantly clients** - See all workspaces you manage
 2. **Get lead responses** - Pull interested leads with their email addresses, replies, and timestamps
 3. **Get campaign stats** - Fetch emails sent, reply rates, opportunities, etc.
 4. **Get workspace info** - Fetch detailed workspace information including actual workspace names, plan details, and metadata
+
+### Bison (24 clients)
+1. **List all Bison clients** - See all Bison workspaces
+2. **Get lead responses** - Pull interested leads marked in Bison with their emails and replies
+3. **Get campaign stats** - Fetch emails sent, opens, replies, interested leads, bounces, and unsubscribes
+
+### Unified Tools
+1. **Get all clients** - See all 80 clients across both platforms in one list
 
 ## Setup Instructions
 
@@ -24,7 +33,7 @@ This MCP (Model Context Protocol) server allows Claude to automatically fetch le
 ```json
 {
   "mcpServers": {
-    "instantly-leads": {
+    "lead-management": {
       "command": "python3",
       "args": [
         "/Users/jonathangarces/Desktop/leadgenjay_client_health_tracker/mcp_server.py"
@@ -34,6 +43,8 @@ This MCP (Model Context Protocol) server allows Claude to automatically fetch le
 }
 ```
 
+**Note:** The server name changed from `instantly-leads` to `lead-management` to reflect support for both platforms.
+
 4. Save the file
 5. Restart Claude Desktop
 6. Look for a 🔨 (hammer) icon in Claude - this means the MCP is connected!
@@ -42,41 +53,288 @@ This MCP (Model Context Protocol) server allows Claude to automatically fetch le
 
 Try these example questions in Claude:
 
-**1. List all clients:**
+#### Unified Queries (Both Platforms)
+
+**1. List ALL clients from both platforms:**
 ```
-Show me all available clients
+Show me all available clients across both Instantly and Bison
 ```
 
-**2. Get lead responses by client name (fuzzy matching):**
+**2. Compare platforms for a specific client:**
+```
+Get lead responses for Jeff Mikolai from both Instantly and Bison for the last 30 days
+```
+
+#### Instantly Queries
+
+**3. Get Instantly lead responses by client name:**
 ```
 Show me interested leads for Prism PR from the last 30 days
 ```
 
-**3. Get lead responses by exact workspace ID:**
-```
-Get lead responses for workspace 23dbc003-ebe2-4950-96f3-78761de5cf85
-```
-
-**4. Get campaign statistics:**
+**4. Get Instantly campaign statistics:**
 ```
 What are the campaign stats for Search Atlas in the last 7 days?
 ```
 
-**5. Get workspace details:**
+**5. Get Instantly workspace details:**
 ```
 Get workspace info for Prism PR
 ```
 
-**6. Create a client recap (combines multiple tools):**
+#### Bison Queries
+
+**6. List all Bison clients:**
 ```
-Create a client recap for Prism PR for the last 30 days.
-Include campaign stats and all interested lead responses with their emails.
+Show me all Bison clients
+```
+
+**7. Get Bison lead responses:**
+```
+Show me interested leads from Bison for Jeff Mikolai from the last 30 days
+```
+
+**8. Get Bison campaign statistics:**
+```
+What are the Bison campaign stats for Derek Hobbs in the last 7 days?
+```
+
+#### Advanced Use Cases
+
+**9. Create a unified client recap:**
+```
+Create a client recap for Jeff Mikolai for the last 30 days.
+Include stats and lead responses from BOTH Instantly and Bison.
+```
+
+**10. Multi-platform performance comparison:**
+```
+Compare campaign performance across both platforms:
+- Show me total emails sent on each platform
+- Which platform has more interested leads?
+- What are the reply rates on each?
 ```
 
 ## Available Tools
 
-### 1. `get_client_list()`
-Lists all 54 clients with their workspace IDs and friendly names.
+### Unified Tools
+
+#### `get_all_clients()`
+Lists ALL 80 clients from both Instantly (56) and Bison (24) platforms.
+
+**Example:**
+```
+Claude: "Show me all clients across both platforms"
+```
+
+**Returns:**
+```json
+{
+  "total_clients": 80,
+  "instantly_clients": [...],
+  "bison_clients": [...],
+  "clients": [
+    {
+      "client_name": "Prism PR",
+      "platform": "instantly",
+      "workspace_id": "23dbc003-..."
+    },
+    {
+      "client_name": "Jeff Mikolai",
+      "platform": "bison"
+    },
+    ...
+  ]
+}
+```
+
+### Aggregated Analytics Tools
+
+#### `get_all_platform_stats(days=7)`
+Get combined statistics from BOTH platforms - total emails sent, replies, interested leads across all 80 clients.
+
+**Parameters:**
+- `days` (optional): Number of days to look back (default: 7)
+
+**Example:**
+```
+Claude: "Show me aggregated stats from both platforms for the last 30 days"
+```
+
+**Returns:**
+```json
+{
+  "date_range": {
+    "days": 30,
+    "start_date": "2025-11-12",
+    "end_date": "2025-12-12"
+  },
+  "total_stats": {
+    "total_emails_sent": 125000,
+    "total_replies": 3500,
+    "total_interested_leads": 850,
+    "reply_rate": 2.8,
+    "clients_processed": 80
+  },
+  "platform_breakdown": {
+    "instantly": {
+      "clients": 56,
+      "emails_sent": 95000,
+      "replies": 2600,
+      "opportunities": 650,
+      "reply_rate": 2.74
+    },
+    "bison": {
+      "clients": 24,
+      "emails_sent": 30000,
+      "replies": 900,
+      "interested": 200,
+      "reply_rate": 3.0
+    }
+  }
+}
+```
+
+**Use cases:**
+- Weekly performance reports
+- Compare platform effectiveness
+- Track overall campaign health
+
+#### `get_top_performing_clients(limit=10, metric="interested_leads", days=7)`
+Find your best performing clients across both platforms, ranked by any metric.
+
+**Parameters:**
+- `limit` (optional): Number of top clients to return (default: 10)
+- `metric` (optional): Sort by `interested_leads`, `emails_sent`, `replies`, or `reply_rate` (default: interested_leads)
+- `days` (optional): Number of days to look back (default: 7)
+
+**Example:**
+```
+Claude: "Show me my top 5 clients by interested leads this month"
+```
+
+**Returns:**
+```json
+{
+  "metric": "interested_leads",
+  "days": 30,
+  "limit": 5,
+  "top_clients": [
+    {
+      "rank": 1,
+      "client_name": "Prism PR",
+      "platform": "instantly",
+      "metric_value": 85,
+      "stats": {...}
+    },
+    {
+      "rank": 2,
+      "client_name": "Search Atlas",
+      "platform": "instantly",
+      "metric_value": 72,
+      "stats": {...}
+    },
+    ...
+  ]
+}
+```
+
+**Use cases:**
+- Identify top performers for case studies
+- Reward/recognize high-performing campaigns
+- Learn what works from successful clients
+
+#### `get_underperforming_clients(threshold=5, metric="interested_leads", days=7)`
+Find clients below a performance threshold who need attention or optimization.
+
+**Parameters:**
+- `threshold` (optional): Minimum value - clients below this are underperforming (default: 5)
+- `metric` (optional): Check `interested_leads`, `emails_sent`, `replies`, or `reply_rate` (default: interested_leads)
+- `days` (optional): Number of days to look back (default: 7)
+
+**Example:**
+```
+Claude: "Which clients have less than 3 interested leads this week?"
+```
+
+**Returns:**
+```json
+{
+  "metric": "interested_leads",
+  "threshold": 3,
+  "days": 7,
+  "total_underperforming": 12,
+  "underperforming_clients": [
+    {
+      "client_name": "Client ABC",
+      "platform": "bison",
+      "metric_value": 0,
+      "stats": {...}
+    },
+    {
+      "client_name": "Client XYZ",
+      "platform": "instantly",
+      "metric_value": 1,
+      "stats": {...}
+    },
+    ...
+  ]
+}
+```
+
+**Use cases:**
+- Proactive client support
+- Identify campaigns needing optimization
+- Schedule check-ins with struggling clients
+
+#### `get_weekly_summary()`
+Generate a comprehensive weekly report with overall stats, top 5 performers, underperformers, and AI-generated insights.
+
+**Parameters:**
+- None (always last 7 days)
+
+**Example:**
+```
+Claude: "Give me my weekly summary"
+```
+
+**Returns:**
+```json
+{
+  "period": "Last 7 days",
+  "generated_at": "2025-12-12 14:30:00",
+  "overall_stats": {
+    "total_emails_sent": 35000,
+    "total_replies": 950,
+    "total_interested_leads": 220,
+    "reply_rate": 2.71,
+    "clients_processed": 80
+  },
+  "platform_breakdown": {...},
+  "top_5_performers": [...],
+  "underperformers": {
+    "count": 8,
+    "clients": [...]
+  },
+  "insights": [
+    "Instantly sent 15,000 more emails than Bison",
+    "Bison has a better reply rate (3.2%) vs Instantly (2.5%)",
+    "Top performer: Prism PR (instantly) with 42 interested leads",
+    "8 clients need attention (less than 3 interested leads)"
+  ]
+}
+```
+
+**Use cases:**
+- Monday morning status reports
+- Weekly team meetings
+- Quick performance overview
+- Identify trends and action items
+
+### Instantly Tools
+
+#### `get_client_list()`
+Lists all 56 Instantly clients with their workspace IDs and friendly names.
 
 **Example:**
 ```
@@ -206,69 +464,202 @@ Claude: "Get workspace info for Prism PR"
 - Checking what plan/features a client has access to
 - Getting organization details for client records
 
+### Bison Tools
+
+#### `get_bison_client_list()`
+Lists all 24 Bison clients.
+
+**Example:**
+```
+Claude: "Show me all Bison clients"
+```
+
+**Returns:**
+```json
+{
+  "total_clients": 24,
+  "clients": [
+    {"client_name": "Jeff Mikolai"},
+    {"client_name": "Derek Hobbs"},
+    {"client_name": "Aaron Oravec"},
+    ...
+  ]
+}
+```
+
+#### `get_bison_lead_responses(client_name, days=7)`
+Gets interested lead responses from Bison for a specific client.
+
+**Parameters:**
+- `client_name` (required): Client name (supports fuzzy matching)
+- `days` (optional): Number of days to look back (default: 7)
+- `start_date` (optional): Custom start date in YYYY-MM-DD format
+- `end_date` (optional): Custom end date in YYYY-MM-DD format
+
+**Smart Lookup:**
+- Supports exact client name: `"Jeff Mikolai"`
+- Supports fuzzy matching: `"jeff"`, `"mikolai"`, etc.
+- If multiple matches, Claude will show options and ask you to clarify
+
+**Example:**
+```
+Claude: "Get Bison lead responses for Jeff Mikolai from last 30 days"
+```
+
+**Returns:**
+```json
+{
+  "client_name": "Jeff Mikolai",
+  "start_date": "2025-11-12",
+  "end_date": "2025-12-12",
+  "total_leads": 15,
+  "leads": [
+    {
+      "email": "contact@example.com",
+      "from_name": "John Smith",
+      "reply_body": "Yes, I'm interested in learning more...",
+      "subject": "Re: Your service inquiry",
+      "date_received": "2025-12-11T15:30:00.000000Z",
+      "interested": true,
+      "read": true,
+      "reply_id": 12345
+    },
+    ...
+  ]
+}
+```
+
+**Key fields:**
+- `email`: Lead's email address (PRIMARY - use this for follow-ups!)
+- `from_name`: Name of the person who replied
+- `reply_body`: Full text of their reply
+- `subject`: Email subject line
+- `date_received`: When they replied
+- `interested`: Whether marked as interested in Bison (always true for this query)
+
+#### `get_bison_campaign_stats(client_name, days=7)`
+Gets campaign statistics from Bison for a specific client.
+
+**Parameters:**
+- Same as `get_bison_lead_responses()`
+
+**Example:**
+```
+Claude: "Get Bison campaign stats for Derek Hobbs"
+```
+
+**Returns:**
+```json
+{
+  "client_name": "Derek Hobbs",
+  "start_date": "2025-12-05",
+  "end_date": "2025-12-12",
+  "emails_sent": 1200,
+  "total_leads_contacted": 800,
+  "opened": 450,
+  "opened_percentage": 56.25,
+  "unique_replies_per_contact": 85,
+  "unique_replies_per_contact_percentage": 10.63,
+  "bounced": 15,
+  "bounced_percentage": 1.25,
+  "unsubscribed": 8,
+  "unsubscribed_percentage": 1.0,
+  "interested": 42,
+  "interested_percentage": 5.25
+}
+```
+
+**Key metrics:**
+- `emails_sent`: Total emails sent
+- `total_leads_contacted`: Unique leads contacted
+- `opened`: Number of opens
+- `unique_replies_per_contact`: Number of unique leads who replied (1 reply per lead)
+- `interested`: Number of leads marked as interested
+- All metrics include percentage values
+
 ## Real-World Use Cases
 
-### 1. Weekly Client Recaps
+### 1. Unified Client Recap (Both Platforms)
 ```
-Create a weekly recap for ABC Corp. Include:
+Create a unified recap for Jeff Mikolai for the last 30 days.
+Include:
+- Campaign stats from BOTH Instantly and Bison
+- All interested lead responses with their email addresses from both platforms
+- Compare performance across platforms
+- Format it as an email I can send to the client
+```
+
+### 2. Cross-Platform Performance Analysis
+```
+Compare Jeff Mikolai's performance across both platforms for the last 30 days:
+- Which platform sent more emails?
+- Which has a better reply rate?
+- Which generated more interested leads?
+- Show me total counts and percentages
+```
+
+### 3. Weekly Client Recaps (Single Platform)
+```
+Create a weekly recap for Prism PR on Instantly. Include:
 - Campaign stats (emails sent, replies, opportunities)
 - All interested lead responses with their email addresses
 - Format it as an email I can send to the client
 ```
 
-### 2. Bulk Recaps for All Clients
+### 4. Bulk Recaps for Bison Clients
 ```
-I need to send recaps to all my top 5 clients. For each:
-1. Prism PR
-2. Search Atlas
-3. Jobsdone
-4. kargerandco
-5. Satori Coach
+I need to send recaps to my top 3 Bison clients. For each:
+1. Jeff Mikolai
+2. Derek Hobbs
+3. Aaron Oravec
 
 Pull last 7 days of campaign stats and lead responses.
 Format each as a separate email.
 ```
 
-### 3. Quick Lead Count
+### 5. Quick Lead Count Across Platforms
 ```
-How many interested leads did we get for Prism PR this week?
-```
-
-### 4. Lead Follow-up List
-```
-Give me a list of all email addresses from interested leads
-for Search Atlas in the last 30 days. I need to follow up with them.
+How many interested leads did we get total across both platforms this week?
+Break it down by platform.
 ```
 
-### 5. Performance Comparison
+### 6. Lead Follow-up List (Multi-Platform)
 ```
-Compare campaign performance for the last 30 days:
-- Prism PR
-- Search Atlas
-- Jobsdone
+Give me a unified list of all email addresses from interested leads
+across BOTH Instantly and Bison in the last 30 days.
+I need to follow up with them. Deduplicate if the same lead appears on both platforms.
+```
 
-Show me emails sent, reply rates, and number of interested leads.
+### 7. Platform Migration Analysis
+```
+For clients that are on both platforms, compare their performance:
+- Show me which clients appear on both Instantly and Bison
+- Compare their metrics side-by-side
+- Help me decide if we should consolidate to one platform
 ```
 
 ## How It Works
 
-1. **Google Sheets Integration:** The MCP reads your client list from the Google Sheet (Column A = workspace ID, Column B = API key, Column C = client name)
+1. **Google Sheets Integration:** The MCP reads client lists from TWO tabs in your Google Sheet:
+   - **Instantly tab (GID: 928115249):** Column A = workspace ID, Column B = API key, Column C = client name
+   - **Bison tab (GID: 1631680229):** Column A = client name, Column B = API key
 
-2. **Instantly API:** For each query, it:
-   - Looks up the correct workspace and API key
-   - Calls Instantly's API to fetch data
-   - Filters out your team's emails (only shows external lead responses)
+2. **Dual API Integration:** For each query, it:
+   - Determines which platform (Instantly or Bison) based on the tool you use
+   - Looks up the correct workspace/client and API key
+   - Calls the appropriate API (Instantly or Bison) to fetch data
    - Returns cleaned, structured data to Claude
 
 3. **Smart Lookup:** You can search by:
-   - Exact workspace ID (most reliable)
-   - Client name (fuzzy matching - "prism" matches "Rick Pendrick - Prism PR")
-   - Partial workspace ID
+   - **Instantly:** Exact workspace ID, client name (fuzzy matching - "prism" matches "Rick Pendrick - Prism PR"), or partial workspace ID
+   - **Bison:** Exact client name or fuzzy matching (e.g., "jeff" matches "Jeff Mikolai")
 
-4. **Data Filtering:** Automatically excludes:
+4. **Data Filtering (Instantly only):** Automatically excludes:
    - Emails FROM your team (@prism, @leadgenjay, @pendrick domains)
    - System emails (noreply, paypal, etc.)
    - Only shows genuine external lead responses
+
+5. **Bison Filtering:** Uses the `status=interested` filter to only fetch leads marked as interested in Bison, then filters by date range
 
 ## Troubleshooting
 

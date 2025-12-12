@@ -16,6 +16,7 @@ DEFAULT_SHEET_URL = (
     "1CNejGg-egkp28ItSRfW7F_CkBXgYevjzstJ1QlrAyAY/edit"
 )
 SHEET_GID_INSTANTLY = "928115249"  # Instantly workspaces tab
+SHEET_GID_BISON = "1631680229"  # Bison workspaces tab
 
 
 def load_workspaces_from_sheet(sheet_url: str = DEFAULT_SHEET_URL, gid: str = SHEET_GID_INSTANTLY):
@@ -474,6 +475,819 @@ def get_workspace_info(
         "timestamp_created": details.get("timestamp_created"),
         "timestamp_updated": details.get("timestamp_updated"),
         "default_opportunity_value": details.get("default_opportunity_value")
+    }
+
+
+# ============================================================================
+# BISON FUNCTIONS
+# ============================================================================
+
+def load_bison_workspaces_from_sheet(sheet_url: str = DEFAULT_SHEET_URL, gid: str = SHEET_GID_BISON):
+    """
+    Reads Bison workspaces from Google Sheet tab.
+
+    Bison sheet structure:
+    - Column A: Client Name
+    - Column B: API Key
+
+    Returns:
+        [
+            {"client_name": "ABC Corp", "api_key": "..."},
+            {"client_name": "XYZ Ltd", "api_key": "..."},
+            ...
+        ]
+    """
+    # Normalize URL
+    if "/edit" in sheet_url:
+        base = sheet_url.split("/edit", 1)[0]
+    else:
+        base = sheet_url
+
+    csv_url = f"{base}/export?format=csv&gid={gid}"
+    print(f"[Bison] Fetching workspace list from Google Sheet...")
+
+    resp = requests.get(csv_url, timeout=30)
+    resp.raise_for_status()
+
+    text = resp.text
+    reader = csv.reader(StringIO(text))
+    rows = list(reader)
+
+    workspaces = []
+    for idx, row in enumerate(rows):
+        if len(row) < 2:
+            continue
+        raw_name = (row[0] or "").strip()
+        raw_key = (row[1] or "").strip()
+
+        # Skip empty
+        if not raw_name or not raw_key:
+            continue
+
+        # Skip header row
+        if idx == 0 and (
+            "client" in raw_name.lower() or
+            "name" in raw_name.lower() or
+            "api" in raw_key.lower()
+        ):
+            continue
+
+        workspaces.append({
+            "client_name": raw_name,
+            "api_key": raw_key
+        })
+
+    print(f"[Bison] Loaded {len(workspaces)} workspaces")
+    return workspaces
+
+
+def get_bison_client_list(sheet_url: str = DEFAULT_SHEET_URL):
+    """
+    MCP Tool: Get list of all Bison clients.
+
+    Args:
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "total_clients": int,
+            "clients": [
+                {"client_name": "ABC Corp"},
+                ...
+            ]
+        }
+    """
+    workspaces = load_bison_workspaces_from_sheet(sheet_url)
+
+    clients = [{"client_name": w["client_name"]} for w in workspaces]
+
+    return {
+        "total_clients": len(clients),
+        "clients": clients
+    }
+
+
+def get_bison_lead_responses(
+    client_name: str,
+    start_date: str = None,
+    end_date: str = None,
+    days: int = 7,
+    sheet_url: str = DEFAULT_SHEET_URL
+):
+    """
+    MCP Tool: Get interested lead responses from Bison for a specific client.
+
+    Args:
+        client_name: Client name (supports fuzzy matching)
+        start_date: Start date in YYYY-MM-DD format (optional if using 'days')
+        end_date: End date in YYYY-MM-DD format (optional if using 'days')
+        days: Number of days to look back (default: 7)
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "client_name": str,
+            "start_date": str,
+            "end_date": str,
+            "total_leads": int,
+            "leads": [
+                {
+                    "email": str,
+                    "from_name": str,
+                    "reply_body": str,
+                    "subject": str,
+                    "date_received": str,
+                    "interested": bool,
+                    "read": bool
+                }
+            ]
+        }
+    """
+    # Load workspaces
+    workspaces = load_bison_workspaces_from_sheet(sheet_url)
+
+    # Find the workspace by name (fuzzy matching)
+    workspace = None
+    search_term = client_name.lower()
+
+    # Try exact match first
+    for w in workspaces:
+        if w["client_name"].lower() == search_term:
+            workspace = w
+            break
+
+    # Try fuzzy match
+    if not workspace:
+        matches = []
+        for w in workspaces:
+            if search_term in w["client_name"].lower():
+                matches.append(w)
+
+        if len(matches) == 1:
+            workspace = matches[0]
+        elif len(matches) > 1:
+            match_list = [w["client_name"] for w in matches]
+            raise ValueError(
+                f"Multiple matches found for '{client_name}':\n" +
+                "\n".join(f"  - {m}" for m in match_list) +
+                "\n\nPlease be more specific."
+            )
+
+    if not workspace:
+        available = [w["client_name"] for w in workspaces[:10]]
+        available_str = '\n'.join(f"  - {a}" for a in available)
+        raise ValueError(
+            f"Client '{client_name}' not found.\n\n"
+            f"Available clients (showing first 10):\n{available_str}\n\n"
+            f"Use get_bison_client_list() to see all {len(workspaces)} clients."
+        )
+
+    print(f"[Bison] Found client: {workspace['client_name']}")
+
+    # Handle date range
+    if not start_date or not end_date:
+        end = datetime.now()
+        start = end - timedelta(days=days)
+        start_date = start.strftime("%Y-%m-%d")
+        end_date = end.strftime("%Y-%m-%d")
+
+    # Call Bison API to get replies
+    url = "https://send.leadgenjay.com/api/replies"
+    headers = {"Authorization": f"Bearer {workspace['api_key']}"}
+    params = {
+        "status": "interested",  # Only get interested leads
+        "folder": "inbox"
+    }
+
+    print(f"[Bison] Fetching interested replies for {workspace['client_name']}...")
+
+    response = requests.get(url, headers=headers, params=params, timeout=30)
+    response.raise_for_status()
+
+    data = response.json()
+
+    # Filter by date range
+    leads = []
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+
+    for reply in data.get("data", []):
+        # Parse date_received
+        date_received = reply.get("date_received")
+        if date_received:
+            reply_dt = datetime.fromisoformat(date_received.replace("Z", "+00:00"))
+            # Check if within date range
+            if start_dt <= reply_dt.replace(tzinfo=None) <= end_dt:
+                leads.append({
+                    "email": reply.get("from_email_address"),
+                    "from_name": reply.get("from_name"),
+                    "reply_body": reply.get("text_body") or reply.get("html_body", ""),
+                    "subject": reply.get("subject"),
+                    "date_received": date_received,
+                    "interested": reply.get("interested", False),
+                    "read": reply.get("read", False),
+                    "reply_id": reply.get("id")
+                })
+
+    return {
+        "client_name": workspace["client_name"],
+        "start_date": start_date,
+        "end_date": end_date,
+        "total_leads": len(leads),
+        "leads": leads
+    }
+
+
+def get_bison_campaign_stats(
+    client_name: str,
+    start_date: str = None,
+    end_date: str = None,
+    days: int = 7,
+    sheet_url: str = DEFAULT_SHEET_URL
+):
+    """
+    MCP Tool: Get campaign statistics from Bison for a specific client.
+
+    Args:
+        client_name: Client name (supports fuzzy matching)
+        start_date: Start date in YYYY-MM-DD format (optional)
+        end_date: End date in YYYY-MM-DD format (optional)
+        days: Number of days to look back (default: 7)
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "client_name": str,
+            "start_date": str,
+            "end_date": str,
+            "emails_sent": int,
+            "total_leads_contacted": int,
+            "opened": int,
+            "opened_percentage": float,
+            "unique_replies_per_contact": int,
+            "unique_replies_per_contact_percentage": float,
+            "bounced": int,
+            "bounced_percentage": float,
+            "unsubscribed": int,
+            "unsubscribed_percentage": float,
+            "interested": int,
+            "interested_percentage": float
+        }
+    """
+    # Load workspaces
+    workspaces = load_bison_workspaces_from_sheet(sheet_url)
+
+    # Find the workspace (same logic as get_bison_lead_responses)
+    workspace = None
+    search_term = client_name.lower()
+
+    # Try exact match first
+    for w in workspaces:
+        if w["client_name"].lower() == search_term:
+            workspace = w
+            break
+
+    # Try fuzzy match
+    if not workspace:
+        matches = []
+        for w in workspaces:
+            if search_term in w["client_name"].lower():
+                matches.append(w)
+
+        if len(matches) == 1:
+            workspace = matches[0]
+        elif len(matches) > 1:
+            match_list = [w["client_name"] for w in matches]
+            raise ValueError(
+                f"Multiple matches found for '{client_name}':\n" +
+                "\n".join(f"  - {m}" for m in match_list) +
+                "\n\nPlease be more specific."
+            )
+
+    if not workspace:
+        raise ValueError(f"Client '{client_name}' not found.")
+
+    # Handle date range
+    if not start_date or not end_date:
+        end = datetime.now()
+        start = end - timedelta(days=days)
+        start_date = start.strftime("%Y-%m-%d")
+        end_date = end.strftime("%Y-%m-%d")
+
+    # Call Bison stats API
+    url = "https://send.leadgenjay.com/api/workspaces/v1.1/stats"
+    headers = {"Authorization": f"Bearer {workspace['api_key']}"}
+    params = {
+        "start_date": start_date,
+        "end_date": end_date
+    }
+
+    print(f"[Bison] Fetching campaign stats for {workspace['client_name']}...")
+
+    response = requests.get(url, headers=headers, params=params, timeout=30)
+    response.raise_for_status()
+
+    data = response.json().get("data", {})
+
+    return {
+        "client_name": workspace["client_name"],
+        "start_date": start_date,
+        "end_date": end_date,
+        "emails_sent": int(data.get("emails_sent", 0)),
+        "total_leads_contacted": int(data.get("total_leads_contacted", 0)),
+        "opened": int(data.get("opened", 0)),
+        "opened_percentage": float(data.get("opened_percentage", 0)),
+        "unique_replies_per_contact": int(data.get("unique_replies_per_contact", 0)),
+        "unique_replies_per_contact_percentage": float(data.get("unique_replies_per_contact_percentage", 0)),
+        "bounced": int(data.get("bounced", 0)),
+        "bounced_percentage": float(data.get("bounced_percentage", 0)),
+        "unsubscribed": int(data.get("unsubscribed", 0)),
+        "unsubscribed_percentage": float(data.get("unsubscribed_percentage", 0)),
+        "interested": int(data.get("interested", 0)),
+        "interested_percentage": float(data.get("interested_percentage", 0))
+    }
+
+
+# ============================================================================
+# UNIFIED FUNCTIONS (Both Instantly + Bison)
+# ============================================================================
+
+def get_all_clients(sheet_url: str = DEFAULT_SHEET_URL):
+    """
+    MCP Tool: Get list of ALL clients from both Instantly and Bison.
+
+    Args:
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "total_clients": int,
+            "instantly_clients": [...],
+            "bison_clients": [...],
+            "clients": [
+                {
+                    "client_name": str,
+                    "platform": "instantly" | "bison",
+                    "workspace_id": str (only for instantly)
+                }
+            ]
+        }
+    """
+    # Get both client lists
+    instantly = get_client_list(sheet_url)
+    bison = get_bison_client_list(sheet_url)
+
+    # Combine into unified list
+    all_clients = []
+
+    # Add Instantly clients
+    for client in instantly["clients"]:
+        all_clients.append({
+            "client_name": client["client_name"],
+            "platform": "instantly",
+            "workspace_id": client["workspace_id"]
+        })
+
+    # Add Bison clients
+    for client in bison["clients"]:
+        all_clients.append({
+            "client_name": client["client_name"],
+            "platform": "bison"
+        })
+
+    return {
+        "total_clients": len(all_clients),
+        "instantly_clients": instantly["clients"],
+        "bison_clients": bison["clients"],
+        "clients": all_clients
+    }
+
+
+# ============================================================================
+# AGGREGATED ANALYTICS TOOLS
+# ============================================================================
+
+def get_all_platform_stats(days: int = 7, sheet_url: str = DEFAULT_SHEET_URL):
+    """
+    MCP Tool: Get aggregated statistics from BOTH Instantly and Bison platforms.
+
+    Args:
+        days: Number of days to look back (default: 7)
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "date_range": {
+                "days": int,
+                "start_date": str,
+                "end_date": str
+            },
+            "total_stats": {
+                "total_emails_sent": int,
+                "total_leads": int,
+                "total_interested_leads": int,
+                "platforms": {
+                    "instantly": {...},
+                    "bison": {...}
+                }
+            }
+        }
+    """
+    print(f"[Analytics] Fetching aggregated stats for last {days} days...")
+
+    # Calculate date range
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    start_date = start.strftime("%Y-%m-%d")
+    end_date = end.strftime("%Y-%m-%d")
+
+    # Get all clients
+    instantly_workspaces = load_workspaces_from_sheet(sheet_url)
+    bison_workspaces = load_bison_workspaces_from_sheet(sheet_url)
+
+    # Instantly aggregated stats
+    instantly_total_emails = 0
+    instantly_total_replies = 0
+    instantly_total_opportunities = 0
+    instantly_clients_processed = 0
+
+    for workspace in instantly_workspaces:
+        try:
+            stats = get_campaign_stats(
+                workspace_id=workspace["workspace_id"],
+                days=days,
+                sheet_url=sheet_url
+            )
+            instantly_total_emails += stats.get("emails_sent", 0)
+            instantly_total_replies += stats.get("replies", 0)
+            instantly_total_opportunities += stats.get("opportunities", 0)
+            instantly_clients_processed += 1
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch Instantly stats for {workspace['workspace_id']}: {e}")
+            continue
+
+    # Bison aggregated stats
+    bison_total_emails = 0
+    bison_total_replies = 0
+    bison_total_interested = 0
+    bison_clients_processed = 0
+
+    for workspace in bison_workspaces:
+        try:
+            stats = get_bison_campaign_stats(
+                client_name=workspace["client_name"],
+                days=days,
+                sheet_url=sheet_url
+            )
+            bison_total_emails += stats.get("emails_sent", 0)
+            bison_total_replies += stats.get("unique_replies_per_contact", 0)
+            bison_total_interested += stats.get("interested", 0)
+            bison_clients_processed += 1
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch Bison stats for {workspace['client_name']}: {e}")
+            continue
+
+    # Calculate combined totals
+    total_emails_sent = instantly_total_emails + bison_total_emails
+    total_replies = instantly_total_replies + bison_total_replies
+    total_interested = instantly_total_opportunities + bison_total_interested
+
+    return {
+        "date_range": {
+            "days": days,
+            "start_date": start_date,
+            "end_date": end_date
+        },
+        "total_stats": {
+            "total_emails_sent": total_emails_sent,
+            "total_replies": total_replies,
+            "total_interested_leads": total_interested,
+            "reply_rate": round((total_replies / total_emails_sent * 100), 2) if total_emails_sent > 0 else 0,
+            "clients_processed": instantly_clients_processed + bison_clients_processed
+        },
+        "platform_breakdown": {
+            "instantly": {
+                "clients": instantly_clients_processed,
+                "emails_sent": instantly_total_emails,
+                "replies": instantly_total_replies,
+                "opportunities": instantly_total_opportunities,
+                "reply_rate": round((instantly_total_replies / instantly_total_emails * 100), 2) if instantly_total_emails > 0 else 0
+            },
+            "bison": {
+                "clients": bison_clients_processed,
+                "emails_sent": bison_total_emails,
+                "replies": bison_total_replies,
+                "interested": bison_total_interested,
+                "reply_rate": round((bison_total_replies / bison_total_emails * 100), 2) if bison_total_emails > 0 else 0
+            }
+        }
+    }
+
+
+def get_top_performing_clients(
+    limit: int = 10,
+    metric: str = "interested_leads",
+    days: int = 7,
+    sheet_url: str = DEFAULT_SHEET_URL
+):
+    """
+    MCP Tool: Get top performing clients across both platforms.
+
+    Args:
+        limit: Number of top clients to return (default: 10)
+        metric: Metric to sort by - "interested_leads", "emails_sent", "replies", "reply_rate" (default: "interested_leads")
+        days: Number of days to look back (default: 7)
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "metric": str,
+            "days": int,
+            "top_clients": [
+                {
+                    "rank": int,
+                    "client_name": str,
+                    "platform": str,
+                    "metric_value": int/float,
+                    "stats": {...}
+                }
+            ]
+        }
+    """
+    print(f"[Analytics] Finding top {limit} clients by {metric}...")
+
+    # Get all clients
+    instantly_workspaces = load_workspaces_from_sheet(sheet_url)
+    bison_workspaces = load_bison_workspaces_from_sheet(sheet_url)
+
+    all_client_stats = []
+
+    # Fetch Instantly client stats
+    for workspace in instantly_workspaces:
+        try:
+            stats = get_campaign_stats(
+                workspace_id=workspace["workspace_id"],
+                days=days,
+                sheet_url=sheet_url
+            )
+
+            metric_value = 0
+            if metric == "interested_leads":
+                metric_value = stats.get("opportunities", 0)
+            elif metric == "emails_sent":
+                metric_value = stats.get("emails_sent", 0)
+            elif metric == "replies":
+                metric_value = stats.get("replies", 0)
+            elif metric == "reply_rate":
+                metric_value = stats.get("reply_rate", 0)
+
+            all_client_stats.append({
+                "client_name": workspace["client_name"],
+                "platform": "instantly",
+                "metric_value": metric_value,
+                "stats": stats
+            })
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch stats for {workspace['client_name']}: {e}")
+            continue
+
+    # Fetch Bison client stats
+    for workspace in bison_workspaces:
+        try:
+            stats = get_bison_campaign_stats(
+                client_name=workspace["client_name"],
+                days=days,
+                sheet_url=sheet_url
+            )
+
+            metric_value = 0
+            if metric == "interested_leads":
+                metric_value = stats.get("interested", 0)
+            elif metric == "emails_sent":
+                metric_value = stats.get("emails_sent", 0)
+            elif metric == "replies":
+                metric_value = stats.get("unique_replies_per_contact", 0)
+            elif metric == "reply_rate":
+                metric_value = stats.get("unique_replies_per_contact_percentage", 0)
+
+            all_client_stats.append({
+                "client_name": workspace["client_name"],
+                "platform": "bison",
+                "metric_value": metric_value,
+                "stats": stats
+            })
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch stats for {workspace['client_name']}: {e}")
+            continue
+
+    # Sort by metric value (descending)
+    all_client_stats.sort(key=lambda x: x["metric_value"], reverse=True)
+
+    # Get top N
+    top_clients = []
+    for idx, client in enumerate(all_client_stats[:limit], start=1):
+        top_clients.append({
+            "rank": idx,
+            "client_name": client["client_name"],
+            "platform": client["platform"],
+            "metric_value": client["metric_value"],
+            "stats": client["stats"]
+        })
+
+    return {
+        "metric": metric,
+        "days": days,
+        "limit": limit,
+        "top_clients": top_clients
+    }
+
+
+def get_underperforming_clients(
+    threshold: int = 5,
+    metric: str = "interested_leads",
+    days: int = 7,
+    sheet_url: str = DEFAULT_SHEET_URL
+):
+    """
+    MCP Tool: Get underperforming clients across both platforms.
+
+    Args:
+        threshold: Minimum value for the metric - clients below this are considered underperforming (default: 5)
+        metric: Metric to check - "interested_leads", "emails_sent", "replies", "reply_rate" (default: "interested_leads")
+        days: Number of days to look back (default: 7)
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "metric": str,
+            "threshold": int,
+            "days": int,
+            "underperforming_clients": [
+                {
+                    "client_name": str,
+                    "platform": str,
+                    "metric_value": int/float,
+                    "stats": {...}
+                }
+            ]
+        }
+    """
+    print(f"[Analytics] Finding clients with {metric} below {threshold}...")
+
+    # Get all clients
+    instantly_workspaces = load_workspaces_from_sheet(sheet_url)
+    bison_workspaces = load_bison_workspaces_from_sheet(sheet_url)
+
+    underperforming = []
+
+    # Check Instantly clients
+    for workspace in instantly_workspaces:
+        try:
+            stats = get_campaign_stats(
+                workspace_id=workspace["workspace_id"],
+                days=days,
+                sheet_url=sheet_url
+            )
+
+            metric_value = 0
+            if metric == "interested_leads":
+                metric_value = stats.get("opportunities", 0)
+            elif metric == "emails_sent":
+                metric_value = stats.get("emails_sent", 0)
+            elif metric == "replies":
+                metric_value = stats.get("replies", 0)
+            elif metric == "reply_rate":
+                metric_value = stats.get("reply_rate", 0)
+
+            if metric_value < threshold:
+                underperforming.append({
+                    "client_name": workspace["client_name"],
+                    "platform": "instantly",
+                    "metric_value": metric_value,
+                    "stats": stats
+                })
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch stats for {workspace['client_name']}: {e}")
+            continue
+
+    # Check Bison clients
+    for workspace in bison_workspaces:
+        try:
+            stats = get_bison_campaign_stats(
+                client_name=workspace["client_name"],
+                days=days,
+                sheet_url=sheet_url
+            )
+
+            metric_value = 0
+            if metric == "interested_leads":
+                metric_value = stats.get("interested", 0)
+            elif metric == "emails_sent":
+                metric_value = stats.get("emails_sent", 0)
+            elif metric == "replies":
+                metric_value = stats.get("unique_replies_per_contact", 0)
+            elif metric == "reply_rate":
+                metric_value = stats.get("unique_replies_per_contact_percentage", 0)
+
+            if metric_value < threshold:
+                underperforming.append({
+                    "client_name": workspace["client_name"],
+                    "platform": "bison",
+                    "metric_value": metric_value,
+                    "stats": stats
+                })
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch stats for {workspace['client_name']}: {e}")
+            continue
+
+    # Sort by metric value (ascending - worst performers first)
+    underperforming.sort(key=lambda x: x["metric_value"])
+
+    return {
+        "metric": metric,
+        "threshold": threshold,
+        "days": days,
+        "total_underperforming": len(underperforming),
+        "underperforming_clients": underperforming
+    }
+
+
+def get_weekly_summary(sheet_url: str = DEFAULT_SHEET_URL):
+    """
+    MCP Tool: Generate a comprehensive weekly summary across all clients and platforms.
+
+    Args:
+        sheet_url: Google Sheet URL (optional)
+
+    Returns:
+        {
+            "period": "Last 7 days",
+            "overall_stats": {...},
+            "top_performers": [...],
+            "underperformers": [...],
+            "insights": [...]
+        }
+    """
+    print("[Analytics] Generating weekly summary...")
+
+    days = 7
+
+    # Get overall stats
+    overall = get_all_platform_stats(days=days, sheet_url=sheet_url)
+
+    # Get top 5 performers
+    top_performers = get_top_performing_clients(
+        limit=5,
+        metric="interested_leads",
+        days=days,
+        sheet_url=sheet_url
+    )
+
+    # Get underperformers (less than 3 interested leads)
+    underperformers = get_underperforming_clients(
+        threshold=3,
+        metric="interested_leads",
+        days=days,
+        sheet_url=sheet_url
+    )
+
+    # Generate insights
+    insights = []
+
+    # Platform comparison
+    instantly_stats = overall["platform_breakdown"]["instantly"]
+    bison_stats = overall["platform_breakdown"]["bison"]
+
+    if instantly_stats["emails_sent"] > bison_stats["emails_sent"]:
+        insights.append(f"Instantly sent {instantly_stats['emails_sent'] - bison_stats['emails_sent']:,} more emails than Bison")
+    else:
+        insights.append(f"Bison sent {bison_stats['emails_sent'] - instantly_stats['emails_sent']:,} more emails than Instantly")
+
+    if instantly_stats["reply_rate"] > bison_stats["reply_rate"]:
+        insights.append(f"Instantly has a better reply rate ({instantly_stats['reply_rate']}%) vs Bison ({bison_stats['reply_rate']}%)")
+    else:
+        insights.append(f"Bison has a better reply rate ({bison_stats['reply_rate']}%) vs Instantly ({instantly_stats['reply_rate']}%)")
+
+    # Top performer insight
+    if top_performers["top_clients"]:
+        top = top_performers["top_clients"][0]
+        insights.append(f"Top performer: {top['client_name']} ({top['platform']}) with {top['metric_value']} interested leads")
+
+    # Underperformer insight
+    if underperformers["underperforming_clients"]:
+        insights.append(f"{len(underperformers['underperforming_clients'])} clients need attention (less than 3 interested leads)")
+
+    return {
+        "period": f"Last {days} days",
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "overall_stats": overall["total_stats"],
+        "platform_breakdown": overall["platform_breakdown"],
+        "top_5_performers": top_performers["top_clients"],
+        "underperformers": {
+            "count": underperformers["total_underperforming"],
+            "clients": underperformers["underperforming_clients"]
+        },
+        "insights": insights
     }
 
 
