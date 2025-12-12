@@ -692,10 +692,14 @@ def get_bison_lead_responses(
     including those already replied to. This matches the "Lead Tag: Interested" filter in the UI
     and aligns with the campaign stats count.
 
+    Each lead includes their full conversation thread with complete message history,
+    providing context for follow-up actions.
+
     Note: Bison's "interested" status includes:
     - Incoming positive replies (green "Message Status")
     - Leads that were replied to (status persists as "Lead Tag")
-    The function deduplicates by lead_id, returning the most recent interaction per lead.
+    The function deduplicates by lead_id, returning the most recent interaction per lead with
+    complete conversation context.
 
     Args:
         client_name: Client name (supports fuzzy matching)
@@ -719,7 +723,19 @@ def get_bison_lead_responses(
                     "date_received": str,
                     "interested": bool,
                     "read": bool,
-                    "lead_id": int
+                    "lead_id": int,
+                    "thread_message_count": int,
+                    "conversation_thread": [
+                        {
+                            "date_received": str,
+                            "from_name": str,
+                            "from_email": str,
+                            "subject": str,
+                            "body": str,
+                            "type": str,
+                            "reply_id": int
+                        }
+                    ]
                 }
             ]
         }
@@ -856,6 +872,66 @@ def get_bison_lead_responses(
                 "reply_id": best_reply.get("id"),
                 "lead_id": lead_id
             }
+
+    # Fetch conversation threads for each lead
+    print(f"[Bison] Fetching conversation threads for {len(leads_by_id)} leads...")
+    for lead_id, lead_data in leads_by_id.items():
+        reply_id = lead_data["reply_id"]
+        thread_url = f"https://send.leadgenjay.com/api/replies/{reply_id}/conversation-thread"
+
+        try:
+            thread_response = requests.get(thread_url, headers=headers, timeout=30)
+            thread_response.raise_for_status()
+            thread_data = thread_response.json().get("data", {})
+
+            # Build chronological thread: older -> current -> newer
+            thread = []
+
+            # Add older messages (already in chronological order)
+            for msg in thread_data.get("older_messages", []):
+                thread.append({
+                    "date_received": msg.get("date_received"),
+                    "from_name": msg.get("from_name"),
+                    "from_email": msg.get("from_email_address"),
+                    "subject": msg.get("subject"),
+                    "body": msg.get("text_body") or msg.get("html_body", ""),
+                    "type": msg.get("type"),
+                    "reply_id": msg.get("id")
+                })
+
+            # Add current reply
+            current = thread_data.get("current_reply", {})
+            if current:
+                thread.append({
+                    "date_received": current.get("date_received"),
+                    "from_name": current.get("from_name"),
+                    "from_email": current.get("from_email_address"),
+                    "subject": current.get("subject"),
+                    "body": current.get("text_body") or current.get("html_body", ""),
+                    "type": current.get("type"),
+                    "reply_id": current.get("id")
+                })
+
+            # Add newer messages
+            for msg in thread_data.get("newer_messages", []):
+                thread.append({
+                    "date_received": msg.get("date_received"),
+                    "from_name": msg.get("from_name"),
+                    "from_email": msg.get("from_email_address"),
+                    "subject": msg.get("subject"),
+                    "body": msg.get("text_body") or msg.get("html_body", ""),
+                    "type": msg.get("type"),
+                    "reply_id": msg.get("id")
+                })
+
+            # Add thread to lead data
+            lead_data["conversation_thread"] = thread
+            lead_data["thread_message_count"] = len(thread)
+
+        except Exception as e:
+            print(f"[Bison] Warning: Could not fetch thread for lead {lead_id}: {e}")
+            lead_data["conversation_thread"] = []
+            lead_data["thread_message_count"] = 0
 
     # Convert to list, sorted by date (most recent first)
     leads = sorted(leads_by_id.values(), key=lambda x: x["date_received"], reverse=True)

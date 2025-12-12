@@ -148,7 +148,9 @@ async def list_tools() -> list[Tool]:
                 "Get interested lead responses from Bison for a specific client. "
                 "Returns UNIQUE leads (deduplicated by lead_id) that have been marked as 'interested', "
                 "including those already replied to. This matches the UI's 'Lead Tag: Interested' filter "
-                "and aligns with campaign stats count. Returns email addresses, reply text, and timestamps. "
+                "and aligns with campaign stats count. Each lead includes their full conversation thread "
+                "with complete message history, providing context for follow-up actions. "
+                "Returns email addresses, reply text, timestamps, and conversation threads. "
                 "Supports fuzzy client name matching. Example: 'ABC Corp', 'XYZ Company', etc."
             ),
             inputSchema={
