@@ -688,6 +688,15 @@ def get_bison_lead_responses(
     """
     MCP Tool: Get interested lead responses from Bison for a specific client.
 
+    Returns UNIQUE leads (by lead_id) that have been marked as interested in any conversation,
+    including those already replied to. This matches the "Lead Tag: Interested" filter in the UI
+    and aligns with the campaign stats count.
+
+    Note: Bison's "interested" status includes:
+    - Incoming positive replies (green "Message Status")
+    - Leads that were replied to (status persists as "Lead Tag")
+    The function deduplicates by lead_id, returning the most recent interaction per lead.
+
     Args:
         client_name: Client name (supports fuzzy matching)
         start_date: Start date in YYYY-MM-DD format (optional if using 'days')
@@ -709,7 +718,8 @@ def get_bison_lead_responses(
                     "subject": str,
                     "date_received": str,
                     "interested": bool,
-                    "read": bool
+                    "read": bool,
+                    "lead_id": int
                 }
             ]
         }
@@ -759,11 +769,12 @@ def get_bison_lead_responses(
     start_date, end_date, warnings = validate_and_parse_dates(start_date, end_date, days)
 
     # Call Bison API to get replies
+    # Use folder='all' to get both unreplied and replied-to interested leads
     url = "https://send.leadgenjay.com/api/replies"
     headers = {"Authorization": f"Bearer {workspace['api_key']}"}
     params = {
         "status": "interested",  # Only get interested leads
-        "folder": "inbox"
+        "folder": "all"  # Changed from 'inbox' to 'all' to include already-replied-to leads
     }
 
     print(f"[Bison] Fetching interested replies for {workspace['client_name']}...")
@@ -773,28 +784,81 @@ def get_bison_lead_responses(
 
     data = response.json()
 
-    # Filter by date range
-    leads = []
+    # Group all interested replies by lead_id
+    # The data already contains all interested messages (incoming and outgoing) from folder='all'
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
 
+    # Collect all interested replies within date range, grouped by lead_id
+    replies_by_lead = {}
     for reply in data.get("data", []):
-        # Parse date_received
         date_received = reply.get("date_received")
         if date_received:
             reply_dt = datetime.fromisoformat(date_received.replace("Z", "+00:00"))
-            # Check if within date range
             if start_dt <= reply_dt.replace(tzinfo=None) <= end_dt:
-                leads.append({
-                    "email": reply.get("from_email_address"),
-                    "from_name": reply.get("from_name"),
-                    "reply_body": reply.get("text_body") or reply.get("html_body", ""),
-                    "subject": reply.get("subject"),
-                    "date_received": date_received,
-                    "interested": reply.get("interested", False),
-                    "read": reply.get("read", False),
-                    "reply_id": reply.get("id")
-                })
+                lead_id = reply.get("lead_id")
+                if lead_id not in replies_by_lead:
+                    replies_by_lead[lead_id] = []
+                replies_by_lead[lead_id].append(reply)
+
+    # For leads with only outgoing emails, fetch their incoming replies separately
+    leads_needing_contact_info = []
+    for lead_id, replies in replies_by_lead.items():
+        has_incoming = any(r.get("type") == "Tracked Reply" for r in replies)
+        if not has_incoming:
+            leads_needing_contact_info.append(lead_id)
+
+    # Fetch additional replies for leads without incoming interested replies
+    additional_replies = {}
+    if leads_needing_contact_info:
+        print(f"[Bison] Fetching contact info for {len(leads_needing_contact_info)} leads...")
+        url_all = "https://send.leadgenjay.com/api/replies"
+        params_all = {"folder": "all"}  # No status filter to get all replies
+        response_all = requests.get(url_all, headers=headers, params=params_all, timeout=30)
+        response_all.raise_for_status()
+        all_data = response_all.json()
+
+        for lead_id in leads_needing_contact_info:
+            lead_all_replies = [r for r in all_data.get("data", [])
+                              if r.get("lead_id") == lead_id and r.get("type") == "Tracked Reply"]
+            if lead_all_replies:
+                # Get most recent incoming reply
+                lead_all_replies.sort(key=lambda x: x.get("date_received", ""), reverse=True)
+                additional_replies[lead_id] = lead_all_replies[0]
+
+    # Build final leads list with proper contact info
+    leads_by_id = {}
+    for lead_id, replies in replies_by_lead.items():
+        # Find the first incoming "Tracked Reply" for contact info
+        best_reply = None
+        for reply in replies:
+            if reply.get("type") == "Tracked Reply":
+                best_reply = reply
+                break
+
+        # If no incoming reply in interested set, use the one we fetched separately
+        if not best_reply and lead_id in additional_replies:
+            best_reply = additional_replies[lead_id]
+
+        # Fallback to any reply if still nothing found
+        if not best_reply and replies:
+            best_reply = replies[0]
+
+        if best_reply:
+            leads_by_id[lead_id] = {
+                "email": best_reply.get("from_email_address"),
+                "from_name": best_reply.get("from_name"),
+                "reply_body": best_reply.get("text_body") or best_reply.get("html_body", ""),
+                "subject": best_reply.get("subject"),
+                "date_received": best_reply.get("date_received"),
+                "interested": True,
+                "read": best_reply.get("read", False),
+                "reply_id": best_reply.get("id"),
+                "lead_id": lead_id
+            }
+
+    # Convert to list, sorted by date (most recent first)
+    leads = sorted(leads_by_id.values(), key=lambda x: x["date_received"], reverse=True)
 
     result = {
         "client_name": workspace["client_name"],
