@@ -1215,6 +1215,7 @@ def get_underperforming_clients(
 def get_weekly_summary(sheet_url: str = DEFAULT_SHEET_URL):
     """
     MCP Tool: Generate a comprehensive weekly summary across all clients and platforms.
+    OPTIMIZED: Fetches stats once and reuses data instead of making 240+ API calls.
 
     Args:
         sheet_url: Google Sheet URL (optional)
@@ -1228,28 +1229,136 @@ def get_weekly_summary(sheet_url: str = DEFAULT_SHEET_URL):
             "insights": [...]
         }
     """
-    print("[Analytics] Generating weekly summary...")
+    print("[Analytics] Generating optimized weekly summary...")
 
     days = 7
 
-    # Get overall stats
-    overall = get_all_platform_stats(days=days, sheet_url=sheet_url)
+    # Calculate date range
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    start_date = start.strftime("%Y-%m-%d")
+    end_date = end.strftime("%Y-%m-%d")
 
-    # Get top 5 performers
-    top_performers = get_top_performing_clients(
-        limit=5,
-        metric="interested_leads",
-        days=days,
-        sheet_url=sheet_url
-    )
+    # Get all clients
+    instantly_workspaces = load_workspaces_from_sheet(sheet_url)
+    bison_workspaces = load_bison_workspaces_from_sheet(sheet_url)
+
+    # FETCH ALL STATS ONCE (instead of 3 times)
+    all_client_stats = []
+
+    instantly_total_emails = 0
+    instantly_total_replies = 0
+    instantly_total_opportunities = 0
+    instantly_clients_processed = 0
+
+    print(f"[Analytics] Fetching stats from {len(instantly_workspaces)} Instantly clients...")
+    for workspace in instantly_workspaces:
+        try:
+            stats = get_campaign_stats(
+                workspace_id=workspace["workspace_id"],
+                days=days,
+                sheet_url=sheet_url
+            )
+            instantly_total_emails += stats.get("emails_sent", 0)
+            instantly_total_replies += stats.get("replies", 0)
+            instantly_total_opportunities += stats.get("opportunities", 0)
+            instantly_clients_processed += 1
+
+            # Store for ranking
+            all_client_stats.append({
+                "client_name": workspace["client_name"],
+                "platform": "instantly",
+                "interested_leads": stats.get("opportunities", 0),
+                "stats": stats
+            })
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch Instantly stats for {workspace['workspace_id']}: {e}")
+            continue
+
+    bison_total_emails = 0
+    bison_total_replies = 0
+    bison_total_interested = 0
+    bison_clients_processed = 0
+
+    print(f"[Analytics] Fetching stats from {len(bison_workspaces)} Bison clients...")
+    for workspace in bison_workspaces:
+        try:
+            stats = get_bison_campaign_stats(
+                client_name=workspace["client_name"],
+                days=days,
+                sheet_url=sheet_url
+            )
+            bison_total_emails += stats.get("emails_sent", 0)
+            bison_total_replies += stats.get("unique_replies_per_contact", 0)
+            bison_total_interested += stats.get("interested", 0)
+            bison_clients_processed += 1
+
+            # Store for ranking
+            all_client_stats.append({
+                "client_name": workspace["client_name"],
+                "platform": "bison",
+                "interested_leads": stats.get("interested", 0),
+                "stats": stats
+            })
+        except Exception as e:
+            print(f"[Analytics] Warning: Failed to fetch Bison stats for {workspace['client_name']}: {e}")
+            continue
+
+    # Calculate combined totals
+    total_emails_sent = instantly_total_emails + bison_total_emails
+    total_replies = instantly_total_replies + bison_total_replies
+    total_interested = instantly_total_opportunities + bison_total_interested
+
+    overall = {
+        "total_stats": {
+            "total_emails_sent": total_emails_sent,
+            "total_replies": total_replies,
+            "total_interested_leads": total_interested,
+            "reply_rate": round((total_replies / total_emails_sent * 100), 2) if total_emails_sent > 0 else 0,
+            "clients_processed": instantly_clients_processed + bison_clients_processed
+        },
+        "platform_breakdown": {
+            "instantly": {
+                "clients": instantly_clients_processed,
+                "emails_sent": instantly_total_emails,
+                "replies": instantly_total_replies,
+                "opportunities": instantly_total_opportunities,
+                "reply_rate": round((instantly_total_replies / instantly_total_emails * 100), 2) if instantly_total_emails > 0 else 0
+            },
+            "bison": {
+                "clients": bison_clients_processed,
+                "emails_sent": bison_total_emails,
+                "replies": bison_total_replies,
+                "interested": bison_total_interested,
+                "reply_rate": round((bison_total_replies / bison_total_emails * 100), 2) if bison_total_emails > 0 else 0
+            }
+        }
+    }
+
+    # Sort and get top 5 performers (reusing fetched data)
+    all_client_stats.sort(key=lambda x: x["interested_leads"], reverse=True)
+    top_clients = []
+    for idx, client in enumerate(all_client_stats[:5], start=1):
+        top_clients.append({
+            "rank": idx,
+            "client_name": client["client_name"],
+            "platform": client["platform"],
+            "metric_value": client["interested_leads"],
+            "stats": client["stats"]
+        })
 
     # Get underperformers (less than 3 interested leads)
-    underperformers = get_underperforming_clients(
-        threshold=3,
-        metric="interested_leads",
-        days=days,
-        sheet_url=sheet_url
-    )
+    underperforming = [
+        {
+            "client_name": client["client_name"],
+            "platform": client["platform"],
+            "metric_value": client["interested_leads"],
+            "stats": client["stats"]
+        }
+        for client in all_client_stats
+        if client["interested_leads"] < 3
+    ]
+    underperforming.sort(key=lambda x: x["metric_value"])
 
     # Generate insights
     insights = []
@@ -1269,23 +1378,23 @@ def get_weekly_summary(sheet_url: str = DEFAULT_SHEET_URL):
         insights.append(f"Bison has a better reply rate ({bison_stats['reply_rate']}%) vs Instantly ({instantly_stats['reply_rate']}%)")
 
     # Top performer insight
-    if top_performers["top_clients"]:
-        top = top_performers["top_clients"][0]
+    if top_clients:
+        top = top_clients[0]
         insights.append(f"Top performer: {top['client_name']} ({top['platform']}) with {top['metric_value']} interested leads")
 
     # Underperformer insight
-    if underperformers["underperforming_clients"]:
-        insights.append(f"{len(underperformers['underperforming_clients'])} clients need attention (less than 3 interested leads)")
+    if underperforming:
+        insights.append(f"{len(underperforming)} clients need attention (less than 3 interested leads)")
 
     return {
         "period": f"Last {days} days",
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "overall_stats": overall["total_stats"],
         "platform_breakdown": overall["platform_breakdown"],
-        "top_5_performers": top_performers["top_clients"],
+        "top_5_performers": top_clients,
         "underperformers": {
-            "count": underperformers["total_underperforming"],
-            "clients": underperformers["underperforming_clients"]
+            "count": len(underperforming),
+            "clients": underperforming
         },
         "insights": insights
     }
