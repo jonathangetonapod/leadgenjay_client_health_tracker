@@ -6,6 +6,7 @@ Exposes tools to query client lead responses and campaign statistics from both p
 
 import asyncio
 import json
+import sys
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 from mcp_functions import (
@@ -14,6 +15,15 @@ from mcp_functions import (
     get_all_clients,
     get_all_platform_stats, get_top_performing_clients, get_underperforming_clients, get_weekly_summary
 )
+
+# CRITICAL: Redirect all print() to stderr to avoid breaking MCP JSON protocol
+# MCP requires ONLY valid JSON-RPC messages on stdout
+import builtins
+_original_print = builtins.print
+def _stderr_print(*args, **kwargs):
+    kwargs['file'] = sys.stderr
+    _original_print(*args, **kwargs)
+builtins.print = _stderr_print
 
 # Create MCP server
 server = Server("lead-management")
