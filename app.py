@@ -3,6 +3,7 @@ import csv
 from io import StringIO
 from datetime import date
 import traceback
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -37,6 +38,15 @@ SHEET_GID_EMAILBISON = "1631680229"  # Email Bison accounts tab
 
 # Health scoring thresholds
 MIN_EMAILS_FOR_HEALTH = 2000
+
+# Rate limiting configuration
+MAX_WORKERS = 2  # Reduced from 10 to prevent rate limiting
+REQUEST_DELAY = 0.5  # Delay between requests in seconds
+MAX_RETRIES = 3  # Maximum retry attempts for 429 errors
+RETRY_DELAY = 2  # Initial retry delay in seconds (exponential backoff)
+
+# Workspace name cache to reduce API calls
+workspace_cache = {}
 
 HEALTH_RULES = [
     {
@@ -142,19 +152,64 @@ def load_workspaces_from_sheet(sheet_url: str, gid: str = SHEET_GID_INSTANTLY) -
     return workspaces
 
 
+def make_api_request_with_retry(url: str, headers: dict, timeout: int = 30) -> requests.Response:
+    """
+    Make an API request with exponential backoff retry logic for 429 errors.
+
+    Args:
+        url: The API endpoint URL
+        headers: Request headers
+        timeout: Request timeout in seconds
+
+    Returns:
+        Response object if successful
+
+    Raises:
+        requests.exceptions.HTTPError: If all retries fail or non-429 error occurs
+    """
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+
+            # If rate limited (429), retry with exponential backoff
+            if resp.status_code == 429:
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAY * (2 ** attempt)  # Exponential backoff
+                    print(f"[API] Rate limited (429), retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"[API] Rate limited (429), max retries exceeded")
+                    resp.raise_for_status()
+
+            # For other errors or success, return immediately
+            return resp
+
+        except requests.exceptions.RequestException as e:
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_DELAY * (2 ** attempt)
+                print(f"[API] Request failed: {e}, retrying in {delay}s")
+                time.sleep(delay)
+            else:
+                raise
+
+    # This shouldn't be reached, but just in case
+    raise requests.exceptions.HTTPError("Max retries exceeded")
+
+
 def fetch_workspace_info(api_key: str) -> dict:
     """
-    Calls Instantly /workspaces/current using given API key.
+    Calls Instantly /workspaces/current using given API key with retry logic and caching.
     """
+    # Check cache first
+    if api_key in workspace_cache:
+        return workspace_cache[api_key]
+
     headers = {
         "Authorization": f"Bearer {api_key}",
     }
 
-    resp = requests.get(
-        INSTANTLY_WORKSPACE_URL,
-        headers=headers,
-        timeout=30,
-    )
+    resp = make_api_request_with_retry(INSTANTLY_WORKSPACE_URL, headers, timeout=30)
 
     if not resp.ok:
         print(
@@ -165,10 +220,15 @@ def fetch_workspace_info(api_key: str) -> dict:
         resp.raise_for_status()
 
     data = resp.json()
-    return {
+    result = {
         "workspace_id": data.get("id"),
         "workspace_name": data.get("name"),
     }
+
+    # Cache the result
+    workspace_cache[api_key] = result
+
+    return result
 
 
 def fetch_single_status(
@@ -565,7 +625,7 @@ def process_single_workspace(
 
 def fetch_instantly_accounts(api_key: str, limit: int = 100) -> list[dict]:
     """
-    Fetches email accounts from Instantly for a workspace.
+    Fetches email accounts from Instantly for a workspace with retry logic.
     Returns a list of account objects.
     """
     headers = {
@@ -582,12 +642,13 @@ def fetch_instantly_accounts(api_key: str, limit: int = 100) -> list[dict]:
             if starting_after:
                 params["starting_after"] = starting_after
 
-            resp = requests.get(
-                INSTANTLY_ACCOUNTS_URL,
-                headers=headers,
-                params=params,
-                timeout=30,
-            )
+            # Build URL with params
+            url = INSTANTLY_ACCOUNTS_URL
+            if params:
+                param_str = "&".join([f"{k}={v}" for k, v in params.items()])
+                url = f"{url}?{param_str}"
+
+            resp = make_api_request_with_retry(url, headers, timeout=30)
 
             if not resp.ok:
                 print(
@@ -902,8 +963,8 @@ def multi_overview():
             "opportunities": 0,
         }
 
-        # 2) Process all workspaces in parallel
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        # 2) Process all workspaces in parallel with rate limiting
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             # Submit all workspace processing tasks
             futures = {
                 executor.submit(
@@ -927,6 +988,9 @@ def multi_overview():
                         totals["emails_sent"] += summary["emails_sent"]
                         totals["replies"] += summary["replies"]
                         totals["opportunities"] += summary["opportunities"]
+
+                    # Add delay between processing workspaces to prevent rate limiting
+                    time.sleep(REQUEST_DELAY)
                 except Exception as e:
                     row = futures[future]
                     print(f"[{platform_name}] Error processing workspace {row['workspace_id']}: {e}")
