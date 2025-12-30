@@ -747,9 +747,14 @@
               Sheet tab: <strong>gid=928115249</strong> · A: Workspace ID, B:
               API key
             </span>
-            <button id="runBtn" onclick="runReport()">
-              <span>▶</span> Run Report
-            </button>
+            <div style="display: flex; gap: 8px;">
+              <button id="runBtn" onclick="runReport()">
+                <span>▶</span> Run Report
+              </button>
+              <button id="exportBtn" onclick="exportToCSV()" disabled style="background: #10b981;">
+                <span>📥</span> Export CSV
+              </button>
+            </div>
           </div>
 
           <div id="loading" class="loading hidden">
@@ -842,6 +847,10 @@
         resultsDiv.innerHTML = '';
         lastWorkspaces = [];
 
+        // Disable export button
+        const exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.disabled = true;
+
         console.log('Switched to platform:', platform);
       }
 
@@ -885,6 +894,10 @@
         resultsDiv.innerHTML = '';
         lastWorkspaces = [];
 
+        // Disable export button
+        const exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) exportBtn.disabled = true;
+
         console.log('Switched to view:', view);
       }
 
@@ -911,12 +924,16 @@
       function showLoading(show) {
         const loading = document.getElementById("loading");
         const btn = document.getElementById("runBtn");
+        const exportBtn = document.getElementById("exportBtn");
         if (show) {
           loading.classList.remove("hidden");
           btn.disabled = true;
+          exportBtn.disabled = true;
         } else {
           loading.classList.add("hidden");
           btn.disabled = false;
+          // Enable export button only if we have data
+          exportBtn.disabled = lastWorkspaces.length === 0;
         }
       }
 
@@ -1197,14 +1214,17 @@
 
             if (isEmailBison) {
               // Email Bison layout
+              const provider = acc.tags && acc.tags.length > 0 ? acc.tags[0] : '';
               const tags = acc.tags && acc.tags.length > 0 ? acc.tags.join(', ') : 'None';
+              console.log('Email Bison account:', acc.email, 'tags:', acc.tags, 'provider:', provider);
               html += `
                 <tr class="account-detail-row" data-workspace="${wsIndex}">
                   <td colspan="7" style="padding: 8px 16px;">
                     <div style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap; overflow-x: auto;">
                       <div style="flex: 0 1 300px; min-width: 200px;">
                         <strong>${acc.email}</strong>
-                        ${acc.name ? `<div style="color: #666; font-size: 0.9em;">${acc.name}</div>` : ''}
+                        ${provider ? `<div style="color: #666; font-size: 0.85em;">📧 ${provider}</div>` : ''}
+                        ${acc.name ? `<div style="color: #999; font-size: 0.8em;">${acc.name}</div>` : ''}
                       </div>
                       <div style="flex: 0 0 100px; font-size: 0.9em;">
                         ${acc.status}
@@ -1238,6 +1258,7 @@
                     <div style="display: flex; gap: 12px; align-items: center; flex-wrap: nowrap; overflow-x: auto;">
                       <div style="flex: 0 1 300px; min-width: 200px;">
                         <strong>${acc.email}</strong>
+                        ${acc.provider_name ? `<div style="color: #666; font-size: 0.85em;">📧 ${acc.provider_name}</div>` : ''}
                       </div>
                       <div style="flex: 0 0 100px; font-size: 0.9em;">
                         ${acc.status}
@@ -1340,6 +1361,71 @@
         } catch (err) {
           console.error("Webhook exception:", err);
           statusCell.innerHTML = "<span class='error-text'>Error</span>";
+        }
+      }
+
+      async function exportToCSV() {
+        if (!lastWorkspaces || lastWorkspaces.length === 0) {
+          alert('No data to export. Please run a report first.');
+          return;
+        }
+
+        const exportBtn = document.getElementById("exportBtn");
+        const originalText = exportBtn.innerHTML;
+
+        try {
+          exportBtn.disabled = true;
+          exportBtn.innerHTML = '<span>⏳</span> Exporting...';
+
+          const response = await fetch('/export-csv', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              workspaces: lastWorkspaces,
+              view: currentView,
+              platform: currentPlatform,
+            }),
+          });
+
+          if (!response.ok) {
+            throw new Error(`Export failed: ${response.statusText}`);
+          }
+
+          // Get the filename from the Content-Disposition header
+          const contentDisposition = response.headers.get('Content-Disposition');
+          let filename = `${currentPlatform}_${currentView}_${new Date().toISOString().split('T')[0]}.csv`;
+
+          if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+            if (filenameMatch && filenameMatch[1]) {
+              filename = filenameMatch[1];
+            }
+          }
+
+          // Download the CSV file
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+
+          exportBtn.innerHTML = '<span>✓</span> Exported!';
+          setTimeout(() => {
+            exportBtn.innerHTML = originalText;
+            exportBtn.disabled = false;
+          }, 2000);
+        } catch (err) {
+          console.error('Export error:', err);
+          alert(`Export failed: ${err.message}`);
+          exportBtn.innerHTML = originalText;
+          exportBtn.disabled = false;
         }
       }
 

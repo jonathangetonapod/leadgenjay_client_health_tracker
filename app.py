@@ -40,8 +40,9 @@ SHEET_GID_EMAILBISON = "1631680229"  # Email Bison accounts tab
 MIN_EMAILS_FOR_HEALTH = 2000
 
 # Rate limiting configuration
-MAX_WORKERS = 2  # Reduced from 10 to prevent rate limiting
-REQUEST_DELAY = 0.5  # Delay between requests in seconds
+# Instantly limits: 100 req/10s and 600 req/min (both = 10 req/sec max)
+MAX_WORKERS = 8  # Increased for better parallelization while staying under rate limits
+REQUEST_DELAY = 0.1  # Small delay between API requests (in make_api_request_with_retry)
 MAX_RETRIES = 3  # Maximum retry attempts for 429 errors
 RETRY_DELAY = 2  # Initial retry delay in seconds (exponential backoff)
 
@@ -167,6 +168,9 @@ def make_api_request_with_retry(url: str, headers: dict, timeout: int = 30) -> r
     Raises:
         requests.exceptions.HTTPError: If all retries fail or non-429 error occurs
     """
+    # Small delay before each request to help with rate limiting
+    time.sleep(REQUEST_DELAY)
+
     for attempt in range(MAX_RETRIES):
         try:
             resp = requests.get(url, headers=headers, timeout=timeout)
@@ -719,6 +723,16 @@ def process_instantly_accounts(
         else:
             return f"Unknown ({warmup_status})"
 
+    # Map provider codes to provider names
+    def get_provider_name(provider_code):
+        provider_map = {
+            1: "Custom IMAP/SMTP",
+            2: "Google",
+            3: "Microsoft",
+            4: "AWS",
+        }
+        return provider_map.get(provider_code, f"Unknown ({provider_code})")
+
     # Process accounts into display format
     processed_accounts = []
     status_breakdown = {}
@@ -748,6 +762,8 @@ def process_instantly_accounts(
 
         display_status = get_status_name(status)
 
+        provider_code = account.get("provider_code")
+
         processed_accounts.append({
             "email": account.get("email", "Unknown"),
             "status": display_status,
@@ -757,7 +773,8 @@ def process_instantly_accounts(
             "warmup_score": account.get("stat_warmup_score", 0),
             "last_used": account.get("timestamp_last_used", "Never"),
             "health": health,
-            "provider_code": account.get("provider_code"),
+            "provider_code": provider_code,
+            "provider_name": get_provider_name(provider_code),
         })
 
     print(
@@ -988,9 +1005,6 @@ def multi_overview():
                         totals["emails_sent"] += summary["emails_sent"]
                         totals["replies"] += summary["replies"]
                         totals["opportunities"] += summary["opportunities"]
-
-                    # Add delay between processing workspaces to prevent rate limiting
-                    time.sleep(REQUEST_DELAY)
                 except Exception as e:
                     row = futures[future]
                     print(f"[{platform_name}] Error processing workspace {row['workspace_id']}: {e}")
@@ -1069,6 +1083,143 @@ def send_webhook():
         print("Error in /send-webhook:", e)
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.post("/export-csv")
+def export_csv():
+    """
+    POST /export-csv
+    Body:
+      {
+        "workspaces": [...],
+        "view": "campaign_health" | "email_accounts",
+        "platform": "instantly" | "emailbison"
+      }
+    Returns CSV file for download
+    """
+    try:
+        payload = request.get_json(force=True) or {}
+        workspaces = payload.get("workspaces", [])
+        view = payload.get("view", "campaign_health")
+        platform = payload.get("platform", "instantly")
+
+        if not workspaces:
+            return jsonify({"error": "No workspace data provided"}), 400
+
+        # Generate CSV based on view type
+        output = StringIO()
+        writer = csv.writer(output)
+
+        if view == "email_accounts":
+            # Email accounts CSV
+            writer.writerow([
+                "Workspace Name",
+                "Workspace ID",
+                "Email",
+                "Provider",
+                "Status",
+                "Health",
+                "Daily Limit",
+                "Warmup Status",
+                "Warmup Score",
+                "Last Used",
+                "Emails Sent",
+                "Replies",
+                "Interested Leads",
+            ])
+
+            for ws in workspaces:
+                workspace_name = ws.get("workspace_name", "Unknown")
+                workspace_id = ws.get("workspace_id", ws.get("label", "Unknown"))
+                accounts = ws.get("accounts", [])
+
+                for acc in accounts:
+                    # Check if Email Bison or Instantly
+                    is_email_bison = acc.get("emails_sent_count") is not None
+
+                    if is_email_bison:
+                        # Get provider from tags (first tag is usually the provider like "Google", "Microsoft")
+                        tags = acc.get("tags", [])
+                        provider = tags[0] if tags else ""
+
+                        writer.writerow([
+                            workspace_name,
+                            workspace_id,
+                            acc.get("email", ""),
+                            provider,  # Provider from tags
+                            acc.get("status", ""),
+                            acc.get("health", ""),
+                            acc.get("daily_limit", 0),
+                            "",  # No warmup for Email Bison
+                            "",  # No warmup score
+                            "",  # No last used
+                            acc.get("emails_sent_count", 0),
+                            acc.get("unique_replied_count", 0),
+                            acc.get("interested_leads_count", 0),
+                        ])
+                    else:
+                        # Instantly
+                        writer.writerow([
+                            workspace_name,
+                            workspace_id,
+                            acc.get("email", ""),
+                            acc.get("provider_name", ""),
+                            acc.get("status", ""),
+                            acc.get("health", ""),
+                            acc.get("daily_limit", 0),
+                            acc.get("warmup_status", ""),
+                            acc.get("warmup_score", 0),
+                            acc.get("last_used", ""),
+                            "",  # No emails sent count for Instantly
+                            "",  # No replies for individual accounts
+                            "",  # No interested leads for individual accounts
+                        ])
+        else:
+            # Campaign health CSV
+            writer.writerow([
+                "Workspace Name",
+                "Workspace ID",
+                "Start Date",
+                "End Date",
+                "Emails Sent",
+                "Replies",
+                "Opportunities",
+                "Health",
+            ])
+
+            for ws in workspaces:
+                summary = ws.get("summary", {})
+                writer.writerow([
+                    ws.get("workspace_name", "Unknown"),
+                    ws.get("workspace_id", ws.get("label", "Unknown")),
+                    ws.get("start_date", ""),
+                    ws.get("end_date", ""),
+                    summary.get("emails_sent", 0),
+                    summary.get("replies", 0),
+                    summary.get("opportunities", 0),
+                    ws.get("health", "early"),
+                ])
+
+        csv_content = output.getvalue()
+        output.close()
+
+        # Return CSV with appropriate headers
+        from flask import Response
+        timestamp = date.today().isoformat()
+        filename = f"{platform}_{view}_{timestamp}.csv"
+
+        return Response(
+            csv_content,
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+
+    except Exception as e:
+        print("Error in /export-csv:", e)
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.get("/")
